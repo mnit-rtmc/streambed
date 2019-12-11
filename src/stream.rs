@@ -644,7 +644,7 @@ impl StreamBuilder {
                     match src_pad.get_current_caps() {
                         Some(caps) => {
                             match self.config_vbox_caps(vbx, caps, crop) {
-                                Err(e) => error!("setting vbox caps: {}", e),
+                                Err(_) => error!("failed to set vbox caps"),
                                 _ => (),
                             }
                         }
@@ -692,8 +692,8 @@ fn link_src_sink(src: &Element, sink: Element) -> Result<(), Error> {
             Some(sink) => {
                 match sink.get_static_pad("sink") {
                     Some(sink_pad) => {
-                        if let Err(e) = src_pad.link(&sink_pad) {
-                            error!("link pad: {}", e);
+                        if let Err(_) = src_pad.link(&sink_pad) {
+                            error!("link pad failed");
                         }
                     }
                     None => error!("no sink pad"),
@@ -772,7 +772,7 @@ impl Stream {
                     None => warn!("missing stats"),
                 }
             }
-            Err(e) => warn!("jitter stats: {}", e),
+            Err(_) => warn!("failed to get jitter stats"),
         }
         false
     }
@@ -819,7 +819,7 @@ impl Stream {
                     None => error!("last-sample missing"),
                 }
             }
-            Err(e) => warn!("last-sample: {:?}", e),
+            Err(_) => warn!("get last-sample failed"),
         };
         Ok(())
     }
