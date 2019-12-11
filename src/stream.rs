@@ -366,6 +366,21 @@ impl StreamBuilder {
         Ok(stream)
     }
 
+    /// Get timeout as milliseconds
+    fn timeout_ms(&self) -> u32 {
+        u32::from(self.timeout) * 1_000
+    }
+
+    /// Get timeout as microseconds
+    fn timeout_us(&self) -> u64 {
+        u64::from(self.timeout) * SEC_US
+    }
+
+    /// Get timeout as nanoseconds
+    fn timeout_ns(&self) -> u64 {
+        u64::from(self.timeout) * SEC_NS
+    }
+
     /// Check if pipeline should have a text overlay
     fn has_text(&self) -> bool {
         match self.encoding {
@@ -397,7 +412,7 @@ impl StreamBuilder {
         if self.location.starts_with("udp://") {
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
             jtr.set_property("latency", &self.latency)?;
-            jtr.set_property("max-dropout-time", &1500)?;
+            jtr.set_property("max-dropout-time", &self.timeout_ms())?;
             self.add_element(jtr)?;
             let fltr = make_element("capsfilter", None)?;
             let caps = self.create_rtp_caps()?;
@@ -406,7 +421,7 @@ impl StreamBuilder {
             let src = make_element("udpsrc", None)?;
             src.set_property("uri", &self.location)?;
             // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
-            src.set_property("timeout", &(u64::from(self.timeout) * SEC_NS))?;
+            src.set_property("timeout", &self.timeout_ns())?;
             self.add_element(src)
         } else if self.location.starts_with("http://") {
             let src = make_element("souphttpsrc", None)?;
@@ -421,7 +436,7 @@ impl StreamBuilder {
             src.set_property("latency", &self.latency)?;
             src.set_property("tcp-timeout", &(10 * SEC_US))?;
             // Retry TCP after UDP timeout (0 for disabled)
-            src.set_property("timeout", &(u64::from(self.timeout) * SEC_US))?;
+            src.set_property("timeout", &self.timeout_us())?;
             src.set_property("do-retransmission", &false)?;
             src.connect("select-stream", false, |values| {
                 let num = values[1].get::<u32>().unwrap();
