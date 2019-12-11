@@ -4,7 +4,7 @@ use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
 use gstreamer::{
     Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual, ElementFactory,
     GstBinExt, GstObjectExt, Message, MessageView, PadExt, PadExtManual,
-    Pipeline, State, Sample,
+    Pipeline, State, Sample, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{error, info, warn};
@@ -683,22 +683,27 @@ impl Stream {
     }
 
     fn jitter_stats(&mut self, jitter: Element) -> bool {
-        /*GstStructure *s;
-        g_object_get(st->jitter, "stats", &s, NULL);
-        if (s) {
-            guint64 pushed, lost, late;
-            gboolean r =
-                gst_structure_get_uint64(s, "num-pushed", &pushed)
-                 && gst_structure_get_uint64(s, "num-lost", &lost)
-                 && gst_structure_get_uint64(s, "num-late", &late);
-            gst_structure_free(s);
-            if (r) {
-                st->pushed = pushed;
-                st->lost = lost;
-                st->late = late;
-                return true;
+        match jitter.get_property("stats") {
+            Ok(stats) => {
+                match stats.get::<Structure>() {
+                    Some(stats) => {
+                        let pushed = stats.get::<u64>("num-pushed");
+                        let lost = stats.get::<u64>("num-lost");
+                        let late = stats.get::<u64>("num-late");
+                        match (pushed, lost, late) {
+                            (Some(pushed), Some(lost), Some(late)) => {
+                                self.pushed = pushed;
+                                self.lost = lost;
+                                self.late = late;
+                            }
+                            _ => warn!("stats empty"),
+                        }
+                    }
+                    None => warn!("missing stats"),
+                }
             }
-        }*/
+            Err(e) => warn!("jitter stats: {}", e),
+        }
         false
     }
 
