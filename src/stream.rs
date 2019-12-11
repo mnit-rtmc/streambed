@@ -13,13 +13,13 @@ use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{error, info, warn};
 use std::convert::TryFrom;
 
-/// One second (us units)
-const SEC_US: u64 = 1000000;
+/// One second (microsecond units)
+const SEC_US: u64 = 1_000_000;
 
-/// One second (ns units)
-const SEC_NS: u64 = 1000000000;
+/// One second (nanosecond units)
+const SEC_NS: u64 = 1_000_000_000;
 
-/// RTSP stream number of video
+/// RTSP stream number for video
 const STREAM_NUM_VIDEO: u32 = 0;
 
 /// Default stream latency (ms)
@@ -553,8 +553,7 @@ impl StreamBuilder {
     fn create_text(&self) -> Result<Element, Error> {
         let font = format!("Overpass, Bold {}", self.font_sz);
         let txt = make_element("textoverlay", None)?;
-        txt.set_property("text", &self.overlay_text.as_ref()
-            .ok_or(Error::Other("missing overlay text"))?)?;
+        txt.set_property("text", &self.overlay_text.as_ref().unwrap())?;
         txt.set_property("font-desc", &font)?;
         txt.set_property("shaded-background", &false)?;
         txt.set_property("color", &0xFF_FF_FF_E0u32)?;
