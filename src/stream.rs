@@ -1,4 +1,7 @@
-
+// stream.rs
+//
+// Copyright (C) 2019  Minnesota Department of Transportation
+//
 use crate::error::Error;
 use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
 use gstreamer::{
@@ -89,24 +92,24 @@ pub struct MatrixCrop {
 pub struct StreamBuilder {
     /// Index of stream
     idx: usize,
-    /// Font size (pt)
-    font_sz: u32,
-    /// Aspect ratio
-    aspect: AspectRatio,
-    /// Type of sink
-    sink_type: SinkType,
-    /// Matrix crop configuration
-    crop: Option<MatrixCrop>,
-    /// Location URL
+    /// Source location URL
     location: String,
-    /// Overlay text
-    overlay_text: Option<String>,
     /// Video encoding
     encoding: Encoding,
     /// Stream properties (from SDP)
     sprops: String,
+    /// Type of sink
+    sink_type: SinkType,
     /// Latency (ms)
     latency: u32,
+    /// Font size (pt)
+    font_sz: u32,
+    /// Overlay text
+    overlay_text: Option<String>,
+    /// Aspect ratio
+    aspect: AspectRatio,
+    /// Matrix crop configuration
+    crop: Option<MatrixCrop>,
     /// Stream control
     control: Option<Box<dyn StreamControl>>,
     /// Pipeline for stream
@@ -269,10 +272,28 @@ impl StreamBuilder {
     pub fn new(idx: usize) -> Self {
         StreamBuilder {
             idx,
-            font_sz: DEFAULT_FONT_SZ,
             latency: DEFAULT_LATENCY_MS,
+            font_sz: DEFAULT_FONT_SZ,
             ..Default::default()
         }
+    }
+
+    /// Use the specified location
+    pub fn with_location(mut self, location: &str) -> Self {
+        self.location = location.to_string();
+        self
+    }
+
+    /// Use the specified encoding
+    pub fn with_encoding(mut self, encoding: Encoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+
+    /// Use the specified SDP properties
+    pub fn with_sprops(mut self, sprops: &str) -> Self {
+        self.sprops = sprops.to_string();
+        self
     }
 
     /// Use the specified sink type
@@ -281,9 +302,21 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified encoding
-    pub fn with_encoding(mut self, encoding: Encoding) -> Self {
-        self.encoding = encoding;
+    /// Use the specified latency (ms)
+    pub fn with_latency(mut self, latency: u32) -> Self {
+        self.latency = latency;
+        self
+    }
+
+    /// Use the specified font size
+    pub fn with_font_size(mut self, sz: u32) -> Self {
+        self.font_sz = sz;
+        self
+    }
+
+    /// Use the specified overlay text
+    pub fn with_overlay_text(mut self, overlay_text: &str) -> Self {
+        self.overlay_text = Some(overlay_text.to_string());
         self
     }
 
@@ -302,36 +335,6 @@ impl StreamBuilder {
                 None
             }
         };
-        self
-    }
-
-    /// Use the specified font size
-    pub fn with_font_size(mut self, sz: u32) -> Self {
-        self.font_sz = sz;
-        self
-    }
-
-    /// Use the specified location
-    pub fn with_location(mut self, location: &str) -> Self {
-        self.location = location.to_string();
-        self
-    }
-
-    /// Use the specified overlay text
-    pub fn with_overlay_text(mut self, overlay_text: &str) -> Self {
-        self.overlay_text = Some(overlay_text.to_string());
-        self
-    }
-
-    /// Use the specified SDP properties
-    pub fn with_sprops(mut self, sprops: &str) -> Self {
-        self.sprops = sprops.to_string();
-        self
-    }
-
-    /// Use the specified latency (ms)
-    pub fn with_latency(mut self, latency: u32) -> Self {
-        self.latency = latency;
         self
     }
 
