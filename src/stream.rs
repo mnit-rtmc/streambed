@@ -43,7 +43,7 @@ pub enum AspectRatio {
 pub enum Sink {
     /// Fake sink (for testing)
     FAKE,
-    /// UDP multicasting (mcast_addr, mcast_port, config_insertion)
+    /// UDP multicasting (mcast_addr, mcast_port, insert_config)
     UDP(String, i32, bool),
     /// Video Acceleration API
     VAAPI,
@@ -477,18 +477,44 @@ impl StreamBuilder {
                 self.add_element(make_element("tsdemux", None)?)?;
                 self.add_element(make_element("rtpmp2tdepay", None)?)?;
                 let que = make_element("queue", None)?;
-                que.set_property("max-size-time", &650000000)?;
+                que.set_property("max-size-time", &650_000_000)?;
                 self.add_element(que)
             }
             Encoding::MPEG4 => {
-                let dec = make_element("avdec_mpeg4", None)?;
-                dec.set_property("output-corrupt", &false)?;
-                self.add_element(dec)?;
-                self.add_element(make_element("rtpmp4vdepay", None)?)
+                match self.sink {
+                    Sink::UDP(_, _, true) => {
+                        let pay = make_element("rtpmp4vpay", None)?;
+                        // send configuration headers once per second
+                        pay.set_property("config-interval", &1u32)?;
+                        self.add_element(pay)?;
+                        self.add_element(make_element("rtpmp4vdepay", None)?)
+                    }
+                    // don't need to depay for UDP
+                    Sink::UDP(_, _, false) => Ok(()),
+                    _ => {
+                        let dec = make_element("avdec_mpeg4", None)?;
+                        dec.set_property("output-corrupt", &false)?;
+                        self.add_element(dec)?;
+                        self.add_element(make_element("rtpmp4vdepay", None)?)
+                    }
+                }
             }
             Encoding::H264 => {
-                self.add_element(self.create_h264dec()?)?;
-                self.add_element(make_element("rtph264depay", None)?)
+                match self.sink {
+                    Sink::UDP(_, _, true) => {
+                        let pay = make_element("rtph264pay", None)?;
+                        // send sprop parameter sets every IDR frame (-1)
+                        pay.set_property("config-interval", &(-1))?;
+                        self.add_element(pay)?;
+                        self.add_element(make_element("rtph264depay", None)?)
+                    }
+                    // don't need to depay for UDP
+                    Sink::UDP(_, _, false) => Ok(()),
+                    _ => {
+                        self.add_element(self.create_h264dec()?)?;
+                        self.add_element(make_element("rtph264depay", None)?)
+                    }
+                }
             },
             _ => Err(Error::Other("invalid encoding")),
         }
@@ -531,7 +557,7 @@ impl StreamBuilder {
             .ok_or(Error::Other("missing overlay text"))?)?;
         txt.set_property("font-desc", &font)?;
         txt.set_property("shaded-background", &false)?;
-        txt.set_property("color", &0xFFFFFFE0u32)?;
+        txt.set_property("color", &0xFF_FF_FF_E0u32)?;
         txt.set_property("halignment", &0i32)?; // left
         txt.set_property("valignment", &2i32)?; // top
         txt.set_property("wrap-mode", &(-1i32))?; // no wrapping
