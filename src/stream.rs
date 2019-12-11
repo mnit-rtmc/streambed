@@ -4,17 +4,25 @@ use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
 use gstreamer::{
     Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual, ElementFactory,
     GstBinExt, GstObjectExt, Message, MessageView, PadExt, PadExtManual,
-    Pipeline, State, Sample, Structure,
+    Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{error, info, warn};
 use std::convert::TryFrom;
 
-const ONE_SEC_US: u64 = 1000000;
-const TEN_SEC_US: u64 = 10000000;
-const ONE_SEC_NS: u64 = 1000000000;
+/// One second (us units)
+const SEC_US: u64 = 1000000;
+
+/// One second (ns units)
+const SEC_NS: u64 = 1000000000;
+
+/// RTSP stream number of video
 const STREAM_NUM_VIDEO: u32 = 0;
-const DEFAULT_LATENCY: u32 = 100;
+
+/// Default stream latency (ms)
+const DEFAULT_LATENCY_MS: u32 = 100;
+
+/// Default font size (pt)
 const DEFAULT_FONT_SZ: u32 = 22;
 
 /// Pixel aspect ratio handling
@@ -27,21 +35,32 @@ pub enum AspectRatio {
 
 /// Video sink type
 pub enum SinkType {
+    /// Fake sink (for testing)
     FAKE,
+    /// UDP multicasting
     UDP,
+    /// Video Acceleration API
     VAAPI,
+    /// X-Video Image
     XVIMAGE,
 }
 
 /// Video encoding
 #[derive(Debug)]
 pub enum Encoding {
+    /// Portable Network Graphics
     PNG,
+    /// Motion JPEG
     MJPEG,
+    /// MPEG-2 TS
     MPEG2,
+    /// MPEG-4 with RTP
     MPEG4,
+    /// H.264 with RTP
     H264,
+    /// H.265 with RTP
     H265,
+    /// AV1 with RTP
     AV1,
 }
 
@@ -65,6 +84,7 @@ pub struct MatrixCrop {
     vgap: u32,
 }
 
+/// Builder for video streams
 #[derive(Default)]
 pub struct StreamBuilder {
     /// Index of stream
@@ -95,18 +115,27 @@ pub struct StreamBuilder {
     head: Option<Element>,
 }
 
+/// Stream control receives feedback on start/stop
 pub trait StreamControl: Send {
-    fn do_stop(&self);
-    fn ack_started(&self);
+    /// Stream started
+    fn started(&self);
+    /// Stream stopped
+    fn stopped(&self);
 }
 
 /// Video stream
 pub struct Stream {
+    /// Video pipeline
     pipeline: Pipeline,
+    /// Pipeline message bus
     bus: Bus,
+    /// Most recent presentation time stamp
     last_pts: ClockTime,
+    /// Number of pushed packets
     pushed: u64,
+    /// Number of lost packets
     lost: u64,
+    /// Number of late packets
     late: u64,
 }
 
@@ -241,7 +270,7 @@ impl StreamBuilder {
         StreamBuilder {
             idx,
             font_sz: DEFAULT_FONT_SZ,
-            latency: DEFAULT_LATENCY,
+            latency: DEFAULT_LATENCY_MS,
             ..Default::default()
         }
     }
@@ -334,6 +363,7 @@ impl StreamBuilder {
         Ok(stream)
     }
 
+    /// Check if pipeline should have a text overlay
     fn has_text(&self) -> bool {
         match self.encoding {
             // NOTE: MJPEG and textoverlay don't play well together,
@@ -361,7 +391,7 @@ impl StreamBuilder {
 
     /// Add source elements
     fn add_source(&mut self) -> Result<(), Error> {
-        if self.is_udp() {
+        if self.location.starts_with("udp://") {
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
             jtr.set_property("latency", &self.latency)?;
             jtr.set_property("max-dropout-time", &1500)?;
@@ -373,20 +403,20 @@ impl StreamBuilder {
             let src = make_element("udpsrc", None)?;
             src.set_property("uri", &self.location)?;
             // Post GstUDPSrcTimeout messages after 2 seconds (ns)
-            src.set_property("timeout", &(2 * ONE_SEC_NS))?;
+            src.set_property("timeout", &(2 * SEC_NS))?;
             self.add_element(src)
-        } else if self.is_http() {
+        } else if self.location.starts_with("http://") {
             let src = make_element("souphttpsrc", None)?;
             src.set_property("location", &self.location_http())?;
             src.set_property("timeout", &2)?;
             src.set_property("retries", &0)?;
             self.add_element(src)
-        } else if self.is_rtsp() {
+        } else if self.location.starts_with("rtsp://") {
             let src = make_element("rtspsrc", None)?;
             src.set_property("location", &self.location)?;
             src.set_property("latency", &self.latency)?;
-            src.set_property("timeout", &ONE_SEC_US)?;
-            src.set_property("tcp-timeout", &TEN_SEC_US)?;
+            src.set_property("timeout", &SEC_US)?;
+            src.set_property("tcp-timeout", &(10 * SEC_US))?;
             src.set_property("do-retransmission", &false)?;
             src.connect("select-stream", false, |values| {
                 let num = values[1].get::<u32>().unwrap();
@@ -415,14 +445,7 @@ impl StreamBuilder {
         }
     }
 
-    fn is_udp(&self) -> bool {
-        self.location.starts_with("udp://")
-    }
-
-    fn is_http(&self) -> bool {
-        self.location.starts_with("http://")
-    }
-
+    /// Get HTTP location
     fn location_http(&self) -> &str {
         match self.encoding {
             Encoding::PNG | Encoding::MJPEG => &self.location,
@@ -433,10 +456,6 @@ impl StreamBuilder {
                 "http://192.0.2.1/"
             }
         }
-    }
-
-    fn is_rtsp(&self) -> bool {
-        self.location.starts_with("rtsp://")
     }
 
     /// Add decoder / depayloader elements
@@ -531,7 +550,7 @@ impl StreamBuilder {
         match msg.view() {
             MessageView::AsyncDone(_) => {
                 if let Some(control) = &self.control {
-                    control.ack_started();
+                    control.started();
                 }
             }
             MessageView::Eos(_) => {
@@ -577,7 +596,7 @@ impl StreamBuilder {
     /// Stop the stream
     fn stop(&self) {
         if let Some(control) = &self.control {
-            control.do_stop();
+            control.stopped();
         }
     }
 
@@ -659,6 +678,7 @@ impl Drop for Stream {
 
 impl Stream {
 
+    /// Set video overlay window handle
     pub fn set_handle(&self, handle: usize) {
         match self.pipeline.get_by_name("sink") {
             Some(sink) => {
@@ -671,6 +691,7 @@ impl Stream {
         }
     }
 
+    /// Log packet statistics
     pub fn log_stats(&mut self, cam_id: &str) -> bool {
         let pushed = self.pushed;
         let lost = self.lost;
@@ -686,6 +707,7 @@ impl Stream {
         update
     }
 
+    /// Update packet statistics
     fn update_stats(&mut self) -> bool {
         match self.pipeline.get_by_name("jitter") {
             Some(jitter) => self.jitter_stats(jitter),
@@ -693,6 +715,7 @@ impl Stream {
         }
     }
 
+    /// Get statistics from jitter buffer element
     fn jitter_stats(&mut self, jitter: Element) -> bool {
         match jitter.get_property("stats") {
             Ok(stats) => {
@@ -718,14 +741,17 @@ impl Stream {
         false
     }
 
+    /// Start the stream
     pub fn start(&self) {
         self.pipeline.set_state(State::Playing).unwrap();
     }
 
+    /// Stop the stream
     pub fn stop(&mut self) {
         self.pipeline.set_state(State::Null).unwrap();
     }
 
+    /// Check if stream has stopped updating
     pub fn check_eos(&mut self) -> Result<(), Error> {
         if let Some(sink) = self.pipeline.get_by_name("sink") {
             self.check_sink(sink)?;
@@ -733,8 +759,9 @@ impl Stream {
         Ok(())
     }
 
-    /* Check sink to make sure that last-sample is updating.
-     * If not, post an EOS message on the bus. */
+    /// Check sink to make sure that last-sample is updating.
+    ///
+    /// If not, post an EOS message on the bus.
     fn check_sink(&mut self, sink: Element) -> Result<(), Error> {
         match sink.get_property("last-sample") {
             Ok(sample) => {
