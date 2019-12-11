@@ -32,6 +32,7 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 const DEFAULT_FONT_SZ: u32 = 22;
 
 /// Pixel aspect ratio handling
+#[derive(Clone, Copy)]
 pub enum AspectRatio {
     /// Adjust pixel aspect ratio to fill sink window
     FILL,
@@ -46,9 +47,9 @@ pub enum Sink {
     /// UDP multicasting (mcast_addr, mcast_port, insert_config)
     UDP(String, i32, bool),
     /// Video Acceleration API
-    VAAPI,
+    VAAPI(AspectRatio),
     /// X-Video Image
-    XVIMAGE,
+    XVIMAGE(AspectRatio),
 }
 
 /// Video encoding
@@ -111,8 +112,6 @@ pub struct StreamBuilder {
     overlay_text: Option<String>,
     /// Font size (pt)
     font_sz: u32,
-    /// Aspect ratio
-    aspect: AspectRatio,
     /// Matrix crop configuration
     crop: Option<MatrixCrop>,
     /// Stream control
@@ -165,15 +164,16 @@ impl Sink {
         match self {
             Sink::FAKE => "fakesink",
             Sink::UDP(_, _, _) => "udpsink",
-            Sink::VAAPI => "vaapisink",
-            Sink::XVIMAGE => "xvimagesink",
+            Sink::VAAPI(_) => "vaapisink",
+            Sink::XVIMAGE(_) => "xvimagesink",
         }
     }
-    /// Does the sink have a window context
-    fn has_window(&self) -> bool {
+    /// Get the aspect ratio setting
+    fn aspect_ratio(&self) -> Option<AspectRatio> {
         match self {
-            Sink::FAKE | Sink::UDP(_, _, _) => false,
-            Sink::VAAPI | Sink::XVIMAGE => true,
+            Sink::VAAPI(a) => Some(*a),
+            Sink::XVIMAGE(a) => Some(*a),
+            _ => None,
         }
     }
 }
@@ -329,12 +329,6 @@ impl StreamBuilder {
     /// Use the specified font size
     pub fn with_font_size(mut self, sz: u32) -> Self {
         self.font_sz = sz;
-        self
-    }
-
-    /// Use the specified pixel aspect ratio
-    pub fn with_aspect(mut self, aspect: AspectRatio) -> Self {
-        self.aspect = aspect;
         self
     }
 
@@ -523,7 +517,7 @@ impl StreamBuilder {
     /// Create H264 decode element
     fn create_h264dec(&self) -> Result<Element, Error> {
         match self.sink {
-            Sink::VAAPI => make_element("vaapih264dec", None),
+            Sink::VAAPI(_) => make_element("vaapih264dec", None),
             _ => {
                 let dec = make_element("avdec_h264", None)?;
                 dec.set_property("output-corrupt", &false)?;
@@ -535,8 +529,8 @@ impl StreamBuilder {
     /// Create a sink element
     fn create_sink(&self) -> Result<Element, Error> {
         let sink = make_element(self.sink.factory_name(), Some("sink"))?;
-        if self.sink.has_window() {
-            sink.set_property("force-aspect-ratio", &self.aspect.as_bool())?;
+        if let Some(aspect) = self.sink.aspect_ratio() {
+            sink.set_property("force-aspect-ratio", &aspect.as_bool())?;
         }
         match &self.sink {
             Sink::UDP(addr, port, _) => {
