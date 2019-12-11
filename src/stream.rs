@@ -123,6 +123,7 @@ impl Default for SinkType {
 }
 
 impl SinkType {
+    /// Get the gstreamer factory name
     fn factory_name(&self) -> &'static str {
         match self {
             SinkType::FAKE => "fakesink",
@@ -131,6 +132,7 @@ impl SinkType {
             SinkType::XVIMAGE => "xvimagesink",
         }
     }
+    /// Is the sink type for a window context
     fn is_window(&self) -> bool {
         match self {
             SinkType::FAKE | SinkType::UDP => false,
@@ -146,6 +148,7 @@ impl Default for Encoding {
 }
 
 impl AspectRatio {
+    /// Get as boolean value
     fn as_bool(&self) -> bool {
         match self {
             AspectRatio::FILL => false,
@@ -261,6 +264,7 @@ impl StreamBuilder {
         self
     }
 
+    /// Use the specified crop code
     pub fn with_crop(mut self, crop: &str) -> Self {
         self.crop = match MatrixCrop::try_from(crop) {
             Ok(crop) => Some(crop),
@@ -278,6 +282,7 @@ impl StreamBuilder {
         self
     }
 
+    /// Use the specified location
     pub fn with_location(mut self, location: &str) -> Self {
         self.location = location.to_string();
         self
@@ -289,18 +294,23 @@ impl StreamBuilder {
         self
     }
 
+    /// Use the specified SDP properties
     pub fn with_sprops(mut self, sprops: &str) -> Self {
         self.sprops = sprops.to_string();
         self
     }
 
+    /// Use the specified latency (ms)
     pub fn with_latency(mut self, latency: u32) -> Self {
         self.latency = latency;
         self
     }
 
-    pub fn with_control(mut self, control: Box<dyn StreamControl>) -> Self {
-        self.control = Some(control);
+    /// Use the specified stream control
+    pub fn with_control(mut self, control: Option<Box<dyn StreamControl>>)
+        -> Self
+    {
+        self.control = control;
         self
     }
 
@@ -341,7 +351,7 @@ impl StreamBuilder {
         if self.has_text() {
             self.add_element(self.create_text()?)?;
         }
-        if let Some(crop) = &self.crop {
+        if self.crop.is_some() {
             self.add_element(make_element("videobox", Some("vbox"))?)?;
         }
         self.add_decode()?;
@@ -515,7 +525,7 @@ impl StreamBuilder {
     }
 
     /// Handle bus messages
-    fn bus_message(&self, bus: &Bus, msg: &Message, 
+    fn bus_message(&self, _bus: &Bus, msg: &Message, 
         pipeline: &WeakRef<Pipeline>) -> glib::Continue
     {
         match msg.view() {
@@ -564,6 +574,7 @@ impl StreamBuilder {
         glib::Continue(true)
     }
 
+    /// Stop the stream
     fn stop(&self) {
         if let Some(control) = &self.control {
             control.do_stop();
@@ -660,16 +671,16 @@ impl Stream {
         }
     }
 
-    fn log_stats(&mut self, cam_id: &str) -> bool {
+    pub fn log_stats(&mut self, cam_id: &str) -> bool {
         let pushed = self.pushed;
         let lost = self.lost;
         let late = self.late;
         let update = self.update_stats();
         if update {
             info!("stats {}: {} pushed, {} lost, {} late pkts", cam_id,
-                 (self.pushed - pushed).max(0),
-                 (self.lost - lost).max(0),
-                 (self.late - late).max(0),
+                 self.pushed - pushed,
+                 self.lost - lost,
+                 self.late - late,
             );
         }
         update
@@ -707,11 +718,11 @@ impl Stream {
         false
     }
 
-    fn start(&self) {
+    pub fn start(&self) {
         self.pipeline.set_state(State::Playing).unwrap();
     }
 
-    fn stop(&mut self) {
+    pub fn stop(&mut self) {
         self.pipeline.set_state(State::Null).unwrap();
     }
 
