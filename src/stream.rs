@@ -97,15 +97,15 @@ pub struct StreamBuilder {
     /// Video encoding
     encoding: Encoding,
     /// Stream properties (from SDP)
-    sprops: String,
+    sprops: Option<String>,
     /// Type of sink
     sink_type: SinkType,
     /// Latency (ms)
     latency: u32,
-    /// Font size (pt)
-    font_sz: u32,
     /// Overlay text
     overlay_text: Option<String>,
+    /// Font size (pt)
+    font_sz: u32,
     /// Aspect ratio
     aspect: AspectRatio,
     /// Matrix crop configuration
@@ -291,8 +291,8 @@ impl StreamBuilder {
     }
 
     /// Use the specified SDP properties
-    pub fn with_sprops(mut self, sprops: &str) -> Self {
-        self.sprops = sprops.to_string();
+    pub fn with_sprops(mut self, sprops: Option<&str>) -> Self {
+        self.sprops = sprops.map(|s| s.to_string());
         self
     }
 
@@ -308,15 +308,15 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified font size
-    pub fn with_font_size(mut self, sz: u32) -> Self {
-        self.font_sz = sz;
+    /// Use the specified overlay text
+    pub fn with_overlay_text(mut self, overlay_text: Option<&str>) -> Self {
+        self.overlay_text = overlay_text.map(|t| t.to_string());
         self
     }
 
-    /// Use the specified overlay text
-    pub fn with_overlay_text(mut self, overlay_text: &str) -> Self {
-        self.overlay_text = Some(overlay_text.to_string());
+    /// Use the specified font size
+    pub fn with_font_size(mut self, sz: u32) -> Self {
+        self.font_sz = sz;
         self
     }
 
@@ -327,14 +327,8 @@ impl StreamBuilder {
     }
 
     /// Use the specified crop code
-    pub fn with_crop(mut self, crop: &str) -> Self {
-        self.crop = match MatrixCrop::try_from(crop) {
-            Ok(crop) => Some(crop),
-            Err(e) => {
-                warn!("{}: {}", e, crop);
-                None
-            }
-        };
+    pub fn with_crop(mut self, crop: Option<MatrixCrop>) -> Self {
+        self.crop = crop;
         self
     }
 
@@ -434,18 +428,15 @@ impl StreamBuilder {
     /// Create caps for filter element
     fn create_caps(&self) -> Result<Caps, Error> {
         let mut values: Vec<(&str, &dyn ToSendValue)> =
-            vec![("clock-rate", &90000)];
-        match self.encoding {
-            Encoding::MPEG2 => {
-                values.push(("encoding-name", &"MP2T"));
-                Ok(Caps::new_simple("application/x-rtp", &values[..]))
-            }
-            // FIXME: return error with wrong encodings
-            _ => {
-                values.push(("sprop-parameter-sets", &self.sprops));
-                Ok(Caps::new_simple("application/x-rtp", &values[..]))
-            }
+            vec![("clock-rate", &90_000)];
+        if let Encoding::MPEG2 = self.encoding {
+            values.push(("encoding-name", &"MP2T"));
         }
+        if let Some(sprops) = &self.sprops {
+            values.push(("sprop-parameter-sets", &sprops));
+            return Ok(Caps::new_simple("application/x-rtp", &values[..]));
+        }
+        Ok(Caps::new_simple("application/x-rtp", &values[..]))
     }
 
     /// Get HTTP location
