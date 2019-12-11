@@ -39,12 +39,12 @@ pub enum AspectRatio {
     PRESERVE,
 }
 
-/// Video sink type
-pub enum SinkType {
+/// Video sink
+pub enum Sink {
     /// Fake sink (for testing)
     FAKE,
-    /// UDP multicasting
-    UDP,
+    /// UDP multicasting (mcast_addr, mcast_port, config_insertion)
+    UDP(String, i32, bool),
     /// Video Acceleration API
     VAAPI,
     /// X-Video Image
@@ -64,9 +64,9 @@ pub enum Encoding {
     MPEG4,
     /// H.264 with RTP
     H264,
-    /// H.265 with RTP
+    /// H.265 with RTP (future)
     H265,
-    /// AV1 with RTP
+    /// AV1 with RTP (future)
     AV1,
 }
 
@@ -101,16 +101,12 @@ pub struct StreamBuilder {
     encoding: Encoding,
     /// Stream properties (from SDP)
     sprops: Option<String>,
-    /// Type of sink
-    sink_type: SinkType,
-    /// Multicast address
-    mcast_addr: Option<String>,
-    /// Multicast port
-    mcast_port: Option<i32>,
-    /// Latency (ms)
-    latency: u32,
     /// Source timeout (sec)
     timeout: u16,
+    /// Sink config
+    sink: Sink,
+    /// Latency (ms)
+    latency: u32,
     /// Overlay text
     overlay_text: Option<String>,
     /// Font size (pt)
@@ -157,27 +153,27 @@ impl Default for AspectRatio {
     }
 }
 
-impl Default for SinkType {
+impl Default for Sink {
     fn default() -> Self {
-        SinkType::FAKE
+        Sink::FAKE
     }
 }
 
-impl SinkType {
+impl Sink {
     /// Get the gstreamer factory name
     fn factory_name(&self) -> &'static str {
         match self {
-            SinkType::FAKE => "fakesink",
-            SinkType::UDP => "udpsink",
-            SinkType::VAAPI => "vaapisink",
-            SinkType::XVIMAGE => "xvimagesink",
+            Sink::FAKE => "fakesink",
+            Sink::UDP(_, _, _) => "udpsink",
+            Sink::VAAPI => "vaapisink",
+            Sink::XVIMAGE => "xvimagesink",
         }
     }
-    /// Is the sink type for a window context
-    fn is_window(&self) -> bool {
+    /// Does the sink have a window context
+    fn has_window(&self) -> bool {
         match self {
-            SinkType::FAKE | SinkType::UDP => false,
-            SinkType::VAAPI | SinkType::XVIMAGE => true,
+            Sink::FAKE | Sink::UDP(_, _, _) => false,
+            Sink::VAAPI | Sink::XVIMAGE => true,
         }
     }
 }
@@ -281,8 +277,8 @@ impl StreamBuilder {
     pub fn new(idx: usize) -> Self {
         StreamBuilder {
             idx,
-            latency: DEFAULT_LATENCY_MS,
             timeout: DEFAULT_TIMEOUT_SEC,
+            latency: DEFAULT_LATENCY_MS,
             font_sz: DEFAULT_FONT_SZ,
             ..Default::default()
         }
@@ -306,33 +302,21 @@ impl StreamBuilder {
         self
     }
 
+    /// Use the specified timeout (sec)
+    pub fn with_timeout(mut self, timeout: u16) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// Use the specified sink type
-    pub fn with_sink(mut self, sink_type: SinkType) -> Self {
-        self.sink_type = sink_type;
-        self
-    }
-
-    /// Use the specified multicast address
-    pub fn with_mcast_addr(mut self, mcast_addr: Option<&str>) -> Self {
-        self.mcast_addr = mcast_addr.map(|a| a.to_string());
-        self
-    }
-
-    /// Use the specified multicast port
-    pub fn with_mcast_port(mut self, mcast_port: Option<i32>) -> Self {
-        self.mcast_port = mcast_port;
+    pub fn with_sink(mut self, sink: Sink) -> Self {
+        self.sink = sink;
         self
     }
 
     /// Use the specified latency (ms)
     pub fn with_latency(mut self, latency: u32) -> Self {
         self.latency = latency;
-        self
-    }
-
-    /// Use the specified timeout (sec)
-    pub fn with_timeout(mut self, timeout: u16) -> Self {
-        self.timeout = timeout;
         self
     }
 
@@ -391,7 +375,7 @@ impl StreamBuilder {
     /// Check if pipeline should have a text overlay
     fn has_text(&self) -> bool {
         match self.encoding {
-            // NOTE: MJPEG and textoverlay don't play well together,
+            // NOTE: MJPEG and textoverlay don't play well together
             //       due to timestamp issues.
             Encoding::MJPEG => false,
             _ => self.overlay_text.is_some(),
@@ -422,7 +406,7 @@ impl StreamBuilder {
             jtr.set_property("max-dropout-time", &1500)?;
             self.add_element(jtr)?;
             let fltr = make_element("capsfilter", None)?;
-            let caps = self.create_caps()?;
+            let caps = self.create_rtp_caps()?;
             fltr.set_property("caps", &caps)?;
             self.add_element(fltr)?;
             let src = make_element("udpsrc", None)?;
@@ -455,8 +439,8 @@ impl StreamBuilder {
         }
     }
 
-    /// Create caps for filter element
-    fn create_caps(&self) -> Result<Caps, Error> {
+    /// Create RTP caps for filter element
+    fn create_rtp_caps(&self) -> Result<Caps, Error> {
         let mut values: Vec<(&str, &dyn ToSendValue)> =
             vec![("clock-rate", &90_000)];
         if let Encoding::MPEG2 = self.encoding {
@@ -512,8 +496,8 @@ impl StreamBuilder {
 
     /// Create H264 decode element
     fn create_h264dec(&self) -> Result<Element, Error> {
-        match self.sink_type {
-            SinkType::VAAPI => make_element("vaapih264dec", None),
+        match self.sink {
+            Sink::VAAPI => make_element("vaapih264dec", None),
             _ => {
                 let dec = make_element("avdec_h264", None)?;
                 dec.set_property("output-corrupt", &false)?;
@@ -524,18 +508,15 @@ impl StreamBuilder {
 
     /// Create a sink element
     fn create_sink(&self) -> Result<Element, Error> {
-        let sink = make_element(self.sink_type.factory_name(), Some("sink"))?;
-        if self.sink_type.is_window() {
+        let sink = make_element(self.sink.factory_name(), Some("sink"))?;
+        if self.sink.has_window() {
             sink.set_property("force-aspect-ratio", &self.aspect.as_bool())?;
         }
-        match (&self.sink_type, &self.mcast_addr, &self.mcast_port) {
-            (SinkType::UDP, Some(addr), Some(port)) => {
+        match &self.sink {
+            Sink::UDP(addr, port, _) => {
                 sink.set_property("host", addr)?;
                 sink.set_property("port", port)?;
                 sink.set_property("ttl-mc", &15)?;
-            }
-            (SinkType::UDP, _, _) | (_, Some(_), _) | (_, _, Some(_)) => {
-                return Err(Error::Other("invalid multicast config"));
             }
             _ => (),
         }
@@ -584,7 +565,7 @@ impl StreamBuilder {
                 }
             }
             MessageView::Eos(_) => {
-                error!("End of stream: {}", self.location);
+                warn!("End of stream: {}", self.location);
                 self.stop();
             }
             MessageView::StateChanged(change) => {
