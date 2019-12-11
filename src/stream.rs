@@ -100,6 +100,10 @@ pub struct StreamBuilder {
     sprops: Option<String>,
     /// Type of sink
     sink_type: SinkType,
+    /// Multicast address
+    mcast_addr: Option<String>,
+    /// Multicast port
+    mcast_port: Option<u32>,
     /// Latency (ms)
     latency: u32,
     /// Overlay text
@@ -302,6 +306,18 @@ impl StreamBuilder {
         self
     }
 
+    /// Use the specified multicast address
+    pub fn with_mcast_addr(mut self, mcast_addr: Option<&str>) -> Self {
+        self.mcast_addr = mcast_addr.map(|a| a.to_string());
+        self
+    }
+
+    /// Use the specified multicast port
+    pub fn with_mcast_port(mut self, mcast_port: Option<u32>) -> Self {
+        self.mcast_port = mcast_port;
+        self
+    }
+
     /// Use the specified latency (ms)
     pub fn with_latency(mut self, latency: u32) -> Self {
         self.latency = latency;
@@ -404,7 +420,7 @@ impl StreamBuilder {
             self.add_element(src)
         } else if self.location.starts_with("http://") {
             let src = make_element("souphttpsrc", None)?;
-            src.set_property("location", &self.location_http())?;
+            src.set_property("location", &self.location_http()?)?;
             src.set_property("timeout", &2)?;
             src.set_property("retries", &0)?;
             self.add_element(src)
@@ -440,15 +456,10 @@ impl StreamBuilder {
     }
 
     /// Get HTTP location
-    fn location_http(&self) -> &str {
+    fn location_http(&self) -> Result<&str, Error> {
         match self.encoding {
-            Encoding::PNG | Encoding::MJPEG => &self.location,
-            _ => {
-                error!("Unsupported encoding for HTTP: {:?}", self.encoding);
-                // Use IP address in TEST-NET-1 range
-                // to ensure the stream will timeout quickly
-                "http://192.0.2.1/"
-            }
+            Encoding::PNG | Encoding::MJPEG => Ok(&self.location),
+            _ => Err(Error::Other("invalid encoding for HTTP")),
         }
     }
 
@@ -502,6 +513,17 @@ impl StreamBuilder {
         let sink = make_element(self.sink_type.factory_name(), Some("sink"))?;
         if self.sink_type.is_window() {
             sink.set_property("force-aspect-ratio", &self.aspect.as_bool())?;
+        }
+        match (&self.sink_type, &self.mcast_addr, &self.mcast_port) {
+            (SinkType::UDP, Some(addr), Some(port)) => {
+                sink.set_property("host", addr)?;
+                sink.set_property("port", port)?;
+                sink.set_property("ttl-mc", &15)?;
+            }
+            (_, Some(_), _) | (_, _, Some(_)) => {
+                return Err(Error::Other("invalid multicast config"));
+            }
+            _ => (),
         }
         Ok(sink)
     }
