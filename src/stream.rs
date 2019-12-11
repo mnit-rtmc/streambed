@@ -25,6 +25,9 @@ const STREAM_NUM_VIDEO: u32 = 0;
 /// Default stream latency (ms)
 const DEFAULT_LATENCY_MS: u32 = 100;
 
+/// Default source timeout (sec)
+const DEFAULT_TIMEOUT_SEC: u16 = 2;
+
 /// Default font size (pt)
 const DEFAULT_FONT_SZ: u32 = 22;
 
@@ -103,9 +106,11 @@ pub struct StreamBuilder {
     /// Multicast address
     mcast_addr: Option<String>,
     /// Multicast port
-    mcast_port: Option<u32>,
+    mcast_port: Option<i32>,
     /// Latency (ms)
     latency: u32,
+    /// Source timeout (sec)
+    timeout: u16,
     /// Overlay text
     overlay_text: Option<String>,
     /// Font size (pt)
@@ -277,6 +282,7 @@ impl StreamBuilder {
         StreamBuilder {
             idx,
             latency: DEFAULT_LATENCY_MS,
+            timeout: DEFAULT_TIMEOUT_SEC,
             font_sz: DEFAULT_FONT_SZ,
             ..Default::default()
         }
@@ -313,7 +319,7 @@ impl StreamBuilder {
     }
 
     /// Use the specified multicast port
-    pub fn with_mcast_port(mut self, mcast_port: Option<u32>) -> Self {
+    pub fn with_mcast_port(mut self, mcast_port: Option<i32>) -> Self {
         self.mcast_port = mcast_port;
         self
     }
@@ -321,6 +327,12 @@ impl StreamBuilder {
     /// Use the specified latency (ms)
     pub fn with_latency(mut self, latency: u32) -> Self {
         self.latency = latency;
+        self
+    }
+
+    /// Use the specified timeout (sec)
+    pub fn with_timeout(mut self, timeout: u16) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -415,21 +427,23 @@ impl StreamBuilder {
             self.add_element(fltr)?;
             let src = make_element("udpsrc", None)?;
             src.set_property("uri", &self.location)?;
-            // Post GstUDPSrcTimeout messages after 2 seconds (ns)
-            src.set_property("timeout", &(2 * SEC_NS))?;
+            // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
+            src.set_property("timeout", &(u64::from(self.timeout) * SEC_NS))?;
             self.add_element(src)
         } else if self.location.starts_with("http://") {
             let src = make_element("souphttpsrc", None)?;
             src.set_property("location", &self.location_http()?)?;
-            src.set_property("timeout", &2)?;
+            // Blocking request timeout (0 for no timeout)
+            src.set_property("timeout", &u32::from(self.timeout))?;
             src.set_property("retries", &0)?;
             self.add_element(src)
         } else if self.location.starts_with("rtsp://") {
             let src = make_element("rtspsrc", None)?;
             src.set_property("location", &self.location)?;
             src.set_property("latency", &self.latency)?;
-            src.set_property("timeout", &SEC_US)?;
             src.set_property("tcp-timeout", &(10 * SEC_US))?;
+            // Retry TCP after UDP timeout (0 for disabled)
+            src.set_property("timeout", &(u64::from(self.timeout) * SEC_US))?;
             src.set_property("do-retransmission", &false)?;
             src.connect("select-stream", false, |values| {
                 let num = values[1].get::<u32>().unwrap();
@@ -520,7 +534,7 @@ impl StreamBuilder {
                 sink.set_property("port", port)?;
                 sink.set_property("ttl-mc", &15)?;
             }
-            (_, Some(_), _) | (_, _, Some(_)) => {
+            (SinkType::UDP, _, _) | (_, Some(_), _) | (_, _, Some(_)) => {
                 return Err(Error::Other("invalid multicast config"));
             }
             _ => (),
