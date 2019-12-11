@@ -1,0 +1,745 @@
+
+use crate::error::Error;
+use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
+use gstreamer::{
+    Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual, ElementFactory,
+    GstBinExt, GstObjectExt, Message, MessageView, PadExt, PadExtManual,
+    Pipeline, State, Sample,
+};
+use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
+use log::{error, info, warn};
+use std::convert::TryFrom;
+
+const ONE_SEC_US: u64 = 1000000;
+const TEN_SEC_US: u64 = 10000000;
+const ONE_SEC_NS: u64 = 1000000000;
+const STREAM_NUM_VIDEO: u32 = 0;
+const DEFAULT_LATENCY: u32 = 100;
+const DEFAULT_FONT_SZ: u32 = 22;
+
+/// Pixel aspect ratio handling
+pub enum AspectRatio {
+    /// Adjust pixel aspect ratio to fill sink window
+    FILL,
+    /// Preserve pixel aspect ratio
+    PRESERVE,
+}
+
+/// Video sink type
+pub enum SinkType {
+    FAKE,
+    UDP,
+    VAAPI,
+    XVIMAGE,
+}
+
+/// Video encoding
+#[derive(Debug)]
+pub enum Encoding {
+    PNG,
+    MJPEG,
+    MPEG2,
+    MPEG4,
+    H264,
+    H265,
+    AV1,
+}
+
+/// Video matrix crop configuration
+pub struct MatrixCrop {
+    /// X-position `0..=7` in matrix
+    x: u8,
+    /// Y-position `0..=7` in matrix
+    y: u8,
+    /// Width `1..=8` of matrix
+    width: u8,
+    /// Height `1..=8` of matrix
+    height: u8,
+    /// Horizontal gap at edges
+    ///
+    /// Value in hundredths of percent of window `0.00 to 100.00`
+    hgap: u32,
+    /// Vertical gap at edges
+    ///
+    /// Value in hundredths of percent of window `0.00 to 100.00`
+    vgap: u32,
+}
+
+#[derive(Default)]
+pub struct StreamBuilder {
+    /// Index of stream
+    idx: usize,
+    /// Font size (pt)
+    font_sz: u32,
+    /// Aspect ratio
+    aspect: AspectRatio,
+    /// Type of sink
+    sink_type: SinkType,
+    /// Matrix crop configuration
+    crop: Option<MatrixCrop>,
+    /// Location URL
+    location: String,
+    /// Overlay text
+    overlay_text: Option<String>,
+    /// Video encoding
+    encoding: Encoding,
+    /// Stream properties (from SDP)
+    sprops: String,
+    /// Latency (ms)
+    latency: u32,
+    /// Stream control
+    control: Option<Box<dyn StreamControl>>,
+    /// Pipeline for stream
+    pipeline: Option<Pipeline>,
+    /// Head element of pipeline
+    head: Option<Element>,
+}
+
+pub trait StreamControl: Send {
+    fn do_stop(&self);
+    fn ack_started(&self);
+}
+
+/// Video stream
+pub struct Stream {
+    pipeline: Pipeline,
+    bus: Bus,
+    last_pts: ClockTime,
+    pushed: u64,
+    lost: u64,
+    late: u64,
+}
+
+impl Default for AspectRatio {
+    fn default() -> Self {
+        AspectRatio::PRESERVE
+    }
+}
+
+impl Default for SinkType {
+    fn default() -> Self {
+        SinkType::FAKE
+    }
+}
+
+impl SinkType {
+    fn factory_name(&self) -> &'static str {
+        match self {
+            SinkType::FAKE => "fakesink",
+            SinkType::UDP => "udpsink",
+            SinkType::VAAPI => "vaapisink",
+            SinkType::XVIMAGE => "xvimagesink",
+        }
+    }
+    fn is_window(&self) -> bool {
+        match self {
+            SinkType::FAKE | SinkType::UDP => false,
+            SinkType::VAAPI | SinkType::XVIMAGE => true,
+        }
+    }
+}
+
+impl Default for Encoding {
+    fn default() -> Self {
+        Encoding::PNG
+    }
+}
+
+impl AspectRatio {
+    fn as_bool(&self) -> bool {
+        match self {
+            AspectRatio::FILL => false,
+            AspectRatio::PRESERVE => true,
+        }
+    }
+}
+
+impl TryFrom<&str> for MatrixCrop {
+    type Error = Error;
+
+    fn try_from(v: &str) -> Result<Self, Self::Error> {
+        let p: Vec<_> = v.split(',').collect();
+        if p.len() == 3 {
+            let mut crop = p[0].chars();
+            let x = MatrixCrop::position(crop.next().unwrap_or_default())?;
+            let y = MatrixCrop::position(crop.next().unwrap_or_default())?;
+            let width = MatrixCrop::position(crop.next().unwrap_or_default())?
+                + 1;
+            let height = MatrixCrop::position(crop.next().unwrap_or_default())?
+                + 1;
+            if x < width && y < height {
+                let hgap: u32 = p[1].parse()?;
+                let vgap: u32 = p[2].parse()?;
+                // Don't allow more than 50% gap
+                if hgap <= MatrixCrop::PERCENT / 2 &&
+                   vgap <= MatrixCrop::PERCENT / 2
+                {
+                    return Ok(MatrixCrop { x, y, width, height, hgap, vgap });
+                }
+            }
+        }
+        Err(Error::InvalidCrop())
+    }
+}
+
+impl MatrixCrop {
+    /// Percent of window, in hundredths
+    const PERCENT: u32 = 100_00;
+
+    /// Get a matrix position from a crop code
+    fn position(c: char) -> Result<u8, Error> {
+        match c {
+            'A' ..= 'H' => Ok(c as u8 - b'A'),
+            _ => Err(Error::InvalidCrop()),
+        }
+    }
+
+    /// Get number of pixels to crop from top edge
+    fn top(&self, height: u32) -> u32 {
+        let num = u32::from(self.y);
+        let den = u32::from(self.height);
+        let pix = height * num / den;
+        let gap = height * self.vgap / (den * MatrixCrop::PERCENT * 2);
+        pix + gap
+    }
+
+    /// Get number of pixels to crop from bottom edge
+    fn bottom(&self, height: u32) -> u32 {
+        let num = u32::from(self.height - self.y - 1);
+        let den = u32::from(self.height);
+        let pix = height * num / den;
+        let gap = height * self.vgap / (den * MatrixCrop::PERCENT * 2);
+        pix + gap
+    }
+
+    /// Get number of pixels to crop from left edge
+    fn left(&self, width: u32) -> u32 {
+        let num = u32::from(self.x);
+        let den = u32::from(self.width);
+        let pix = width * num / den;
+        let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
+        pix + gap
+    }
+
+    /// Get number of pixels to crop from right edge
+    fn right(&self, width: u32) -> u32 {
+        let num = u32::from(self.width - self.x - 1);
+        let den = u32::from(self.width);
+        let pix = width * num / den;
+        let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
+        pix + gap
+    }
+}
+
+impl StreamBuilder {
+
+    /// Create a new stream builder
+    pub fn new(idx: usize) -> Self {
+        StreamBuilder {
+            idx,
+            font_sz: DEFAULT_FONT_SZ,
+            latency: DEFAULT_LATENCY,
+            ..Default::default()
+        }
+    }
+
+    /// Use the specified sink type
+    pub fn with_sink(mut self, sink_type: SinkType) -> Self {
+        self.sink_type = sink_type;
+        self
+    }
+
+    /// Use the specified encoding
+    pub fn with_encoding(mut self, encoding: Encoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+
+    /// Use the specified pixel aspect ratio
+    pub fn with_aspect(mut self, aspect: AspectRatio) -> Self {
+        self.aspect = aspect;
+        self
+    }
+
+    pub fn with_crop(mut self, crop: &str) -> Self {
+        self.crop = match MatrixCrop::try_from(crop) {
+            Ok(crop) => Some(crop),
+            Err(e) => {
+                warn!("{}: {}", e, crop);
+                None
+            }
+        };
+        self
+    }
+
+    /// Use the specified font size
+    pub fn with_font_size(mut self, sz: u32) -> Self {
+        self.font_sz = sz;
+        self
+    }
+
+    pub fn with_location(mut self, location: &str) -> Self {
+        self.location = location.to_string();
+        self
+    }
+
+    /// Use the specified overlay text
+    pub fn with_overlay_text(mut self, overlay_text: &str) -> Self {
+        self.overlay_text = Some(overlay_text.to_string());
+        self
+    }
+
+    pub fn with_sprops(mut self, sprops: &str) -> Self {
+        self.sprops = sprops.to_string();
+        self
+    }
+
+    pub fn with_latency(mut self, latency: u32) -> Self {
+        self.latency = latency;
+        self
+    }
+
+    pub fn with_control(mut self, control: Box<dyn StreamControl>) -> Self {
+        self.control = Some(control);
+        self
+    }
+
+    /// Build the stream
+    pub fn build(mut self) -> Result<Stream, Error> {
+        let name = format!("m{}", self.idx);
+        self.pipeline = Some(Pipeline::new(Some(&name)));
+        self.add_elements()?;
+        let pipeline = self.pipeline.take().unwrap();
+        let bus = pipeline.get_bus().unwrap();
+        let pipeline_weak = pipeline.downgrade();
+        let stream = Stream {
+            pipeline,
+            bus: bus.clone(),
+            last_pts: ClockTime::none(),
+            pushed: 0,
+            lost: 0,
+            late: 0,
+        };
+        bus.add_watch(move |b, m| self.bus_message(b, m, &pipeline_weak));
+        Ok(stream)
+    }
+
+    fn has_text(&self) -> bool {
+        match self.encoding {
+            // NOTE: MJPEG and textoverlay don't play well together,
+            //       due to timestamp issues.
+            Encoding::MJPEG => false,
+            _ => self.overlay_text.is_some(),
+        }
+    }
+
+    /// Add all required elements to the pipeline
+    ///
+    /// Pipeline is built from sink to source.
+    fn add_elements(&mut self) -> Result<(), Error> {
+        self.add_element(self.create_sink()?)?;
+        if self.has_text() {
+            self.add_element(self.create_text()?)?;
+        }
+        if let Some(crop) = &self.crop {
+            self.add_element(make_element("videobox", Some("vbox"))?)?;
+        }
+        self.add_decode()?;
+        self.add_source()?;
+        Ok(())
+    }
+
+    /// Add source elements
+    fn add_source(&mut self) -> Result<(), Error> {
+        if self.is_udp() {
+            let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
+            jtr.set_property("latency", &self.latency)?;
+            jtr.set_property("max-dropout-time", &1500)?;
+            self.add_element(jtr)?;
+            let fltr = make_element("capsfilter", None)?;
+            let caps = self.create_caps()?;
+            fltr.set_property("caps", &caps)?;
+            self.add_element(fltr)?;
+            let src = make_element("udpsrc", None)?;
+            src.set_property("uri", &self.location)?;
+            // Post GstUDPSrcTimeout messages after 2 seconds (ns)
+            src.set_property("timeout", &(2 * ONE_SEC_NS))?;
+            self.add_element(src)
+        } else if self.is_http() {
+            let src = make_element("souphttpsrc", None)?;
+            src.set_property("location", &self.location_http())?;
+            src.set_property("timeout", &2)?;
+            src.set_property("retries", &0)?;
+            self.add_element(src)
+        } else if self.is_rtsp() {
+            let src = make_element("rtspsrc", None)?;
+            src.set_property("location", &self.location)?;
+            src.set_property("latency", &self.latency)?;
+            src.set_property("timeout", &ONE_SEC_US)?;
+            src.set_property("tcp-timeout", &TEN_SEC_US)?;
+            src.set_property("do-retransmission", &false)?;
+            src.connect("select-stream", false, |values| {
+                let num = values[1].get::<u32>().unwrap();
+                Some((num == STREAM_NUM_VIDEO).to_value())
+            })?;
+            self.add_element(src)
+        } else {
+            Err(Error::Other("invalid location"))
+        }
+    }
+
+    /// Create caps for filter element
+    fn create_caps(&self) -> Result<Caps, Error> {
+        let mut values: Vec<(&str, &dyn ToSendValue)> =
+            vec![("clock-rate", &90000)];
+        match self.encoding {
+            Encoding::MPEG2 => {
+                values.push(("encoding-name", &"MP2T"));
+                Ok(Caps::new_simple("application/x-rtp", &values[..]))
+            }
+            // FIXME: return error with wrong encodings
+            _ => {
+                values.push(("sprop-parameter-sets", &self.sprops));
+                Ok(Caps::new_simple("application/x-rtp", &values[..]))
+            }
+        }
+    }
+
+    fn is_udp(&self) -> bool {
+        self.location.starts_with("udp://")
+    }
+
+    fn is_http(&self) -> bool {
+        self.location.starts_with("http://")
+    }
+
+    fn location_http(&self) -> &str {
+        match self.encoding {
+            Encoding::PNG | Encoding::MJPEG => &self.location,
+            _ => {
+                error!("Unsupported encoding for HTTP: {:?}", self.encoding);
+                // Use IP address in TEST-NET-1 range
+                // to ensure the stream will timeout quickly
+                "http://192.0.2.1/"
+            }
+        }
+    }
+
+    fn is_rtsp(&self) -> bool {
+        self.location.starts_with("rtsp://")
+    }
+
+    /// Add decoder / depayloader elements
+    fn add_decode(&mut self) -> Result<(), Error> {
+        match self.encoding {
+            Encoding::PNG => {
+                self.add_element(make_element("imagefreeze", None)?)?;
+                self.add_element(make_element("videoconvert", None)?)?;
+                self.add_element(make_element("pngdec", None)?)
+            }
+            Encoding::MJPEG => {
+                self.add_element(make_element("jpegdec", None)?)
+            }
+            Encoding::MPEG2 => {
+                self.add_element(make_element("mpeg2dec", None)?)?;
+                self.add_element(make_element("tsdemux", None)?)?;
+                self.add_element(make_element("rtpmp2tdepay", None)?)?;
+                let que = make_element("queue", None)?;
+                que.set_property("max-size-time", &650000000)?;
+                self.add_element(que)
+            }
+            Encoding::MPEG4 => {
+                let dec = make_element("avdec_mpeg4", None)?;
+                dec.set_property("output-corrupt", &false)?;
+                self.add_element(dec)?;
+                self.add_element(make_element("rtpmp4vdepay", None)?)
+            }
+            Encoding::H264 => {
+                self.add_element(self.create_h264dec()?)?;
+                self.add_element(make_element("rtph264depay", None)?)
+            },
+            _ => Err(Error::Other("invalid encoding")),
+        }
+    }
+
+    /// Create H264 decode element
+    fn create_h264dec(&self) -> Result<Element, Error> {
+        match self.sink_type {
+            SinkType::VAAPI => make_element("vaapih264dec", None),
+            _ => {
+                let dec = make_element("avdec_h264", None)?;
+                dec.set_property("output-corrupt", &false)?;
+                Ok(dec)
+            }
+        }
+    }
+
+    /// Create a sink element
+    fn create_sink(&self) -> Result<Element, Error> {
+        let sink = make_element(self.sink_type.factory_name(), Some("sink"))?;
+        if self.sink_type.is_window() {
+            sink.set_property("force-aspect-ratio", &self.aspect.as_bool())?;
+        }
+        Ok(sink)
+    }
+
+    /// Create a text overlay element
+    fn create_text(&self) -> Result<Element, Error> {
+        let font = format!("Overpass, Bold {}", self.font_sz);
+        let txt = make_element("textoverlay", None)?;
+        txt.set_property("text", &self.overlay_text.as_ref()
+            .ok_or(Error::Other("missing overlay text"))?)?;
+        txt.set_property("font-desc", &font)?;
+        txt.set_property("shaded-background", &false)?;
+        txt.set_property("color", &0xFFFFFFE0u32)?;
+        txt.set_property("halignment", &0i32)?; // left
+        txt.set_property("valignment", &2i32)?; // top
+        txt.set_property("wrap-mode", &(-1i32))?; // no wrapping
+        txt.set_property("xpad", &48i32)?;
+        txt.set_property("ypad", &36i32)?;
+        Ok(txt)
+    }
+
+    /// Add an element to pipeline
+    fn add_element(&mut self, elem: Element) -> Result<(), Error> {
+        let pipeline = self.pipeline.as_ref().unwrap();
+        pipeline.add(&elem)?;
+        match self.head.take() {
+            Some(head) => {
+                link_src_sink(&elem, head)?;
+                self.head = Some(elem);
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// Handle bus messages
+    fn bus_message(&self, bus: &Bus, msg: &Message, 
+        pipeline: &WeakRef<Pipeline>) -> glib::Continue
+    {
+        match msg.view() {
+            MessageView::AsyncDone(_) => {
+                if let Some(control) = &self.control {
+                    control.ack_started();
+                }
+            }
+            MessageView::Eos(_) => {
+                error!("End of stream: {}", self.location);
+                self.stop();
+            }
+            MessageView::StateChanged(change) => {
+                match (&self.crop, change.get_current(), &change.get_src()) {
+                    (Some(crop), State::Playing, Some(src)) => {
+                        if src.is::<Pipeline>() {
+                            match pipeline.upgrade() {
+                                Some(pipeline) => {
+                                    self.configure_vbox(&pipeline, &crop);
+                                }
+                                None => error!("pipeline is gone"),
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            MessageView::Error(err) => {
+                error!("{}  {}", err.get_error(), self.location);
+                self.stop();
+            }
+            MessageView::Warning(wrn) => {
+                warn!("{}  {}", wrn.get_error(), self.location);
+                self.stop();
+            }
+            MessageView::Element(elem) => {
+                if let Some(obj) = elem.get_src() {
+                    if obj.get_name() == "GstUDPSrcTimeout" {
+                        error!("udpsrc timeout -- stopping stream");
+                        self.stop();
+                    }
+                }
+            }
+            _ => (),
+        };
+        glib::Continue(true)
+    }
+
+    fn stop(&self) {
+        if let Some(control) = &self.control {
+            control.do_stop();
+        }
+    }
+
+    /// Configure videobox element
+    fn configure_vbox(&self, pipeline: &Pipeline, crop: &MatrixCrop) {
+        if let Some(vbx) = pipeline.get_by_name("vbox") {
+            match vbx.get_static_pad("src") {
+                Some(src_pad) => {
+                    match src_pad.get_current_caps() {
+                        Some(caps) => {
+                            match self.config_vbox_caps(vbx, caps, crop) {
+                                Err(e) => error!("setting vbox caps: {}", e),
+                                _ => (),
+                            }
+                        }
+                        None => error!("no current caps on vbox src pad"),
+                    }
+                }
+                None => error!("no videobox src pad"),
+            }
+        }
+    }
+
+    /// Configure videobox caps
+    fn config_vbox_caps(&self, vbx: Element, caps: Caps, crop: &MatrixCrop)
+        -> Result<(), Error>
+    {
+        for s in caps.iter() {
+            match (s.get("width"), s.get("height")) {
+                (Some(width), Some(height)) => {
+                    vbx.set_property("top", &crop.top(height))?;
+                    vbx.set_property("bottom", &crop.bottom(height))?;
+                    vbx.set_property("left", &crop.left(width))?;
+                    vbx.set_property("right", &crop.right(width))?;
+                }
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Make a pipeline element
+fn make_element(factory_name: &'static str, name: Option<&str>)
+    -> Result<Element, Error>
+{
+    Ok(ElementFactory::make(factory_name, name)
+        .ok_or_else(|| Error::MissingElement(factory_name))?)
+}
+
+/// Link a source element with a sink
+fn link_src_sink(src: &Element, sink: Element) -> Result<(), Error> {
+    src.link(&sink)?;
+    let sink = sink.downgrade(); // weak ref
+    src.connect_pad_added(move |_src, src_pad| {
+        match sink.upgrade() {
+            Some(sink) => {
+                match sink.get_static_pad("sink") {
+                    Some(sink_pad) => {
+                        if let Err(e) = src_pad.link(&sink_pad) {
+                            error!("link pad: {}", e);
+                        }
+                    }
+                    None => error!("no sink pad"),
+                }
+            }
+            None => error!("no sink to link"),
+        }
+    });
+    Ok(())
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.stop();
+        self.bus.remove_watch().unwrap();
+    }
+}
+
+impl Stream {
+
+    pub fn set_handle(&self, handle: usize) {
+        match self.pipeline.get_by_name("sink") {
+            Some(sink) => {
+                match sink.dynamic_cast::<VideoOverlay>() {
+                    Ok(overlay) => unsafe { overlay.set_window_handle(handle) },
+                    Err(_) => error!("invalid video overlay"),
+                }
+            }
+            None => error!("no sink element for video overlay"),
+        }
+    }
+
+    fn log_stats(&mut self, cam_id: &str) -> bool {
+        let pushed = self.pushed;
+        let lost = self.lost;
+        let late = self.late;
+        let update = self.update_stats();
+        if update {
+            info!("stats {}: {} pushed, {} lost, {} late pkts", cam_id,
+                 (self.pushed - pushed).max(0),
+                 (self.lost - lost).max(0),
+                 (self.late - late).max(0),
+            );
+        }
+        update
+    }
+
+    fn update_stats(&mut self) -> bool {
+        match self.pipeline.get_by_name("jitter") {
+            Some(jitter) => self.jitter_stats(jitter),
+            None => false,
+        }
+    }
+
+    fn jitter_stats(&mut self, jitter: Element) -> bool {
+        /*GstStructure *s;
+        g_object_get(st->jitter, "stats", &s, NULL);
+        if (s) {
+            guint64 pushed, lost, late;
+            gboolean r =
+                gst_structure_get_uint64(s, "num-pushed", &pushed)
+                 && gst_structure_get_uint64(s, "num-lost", &lost)
+                 && gst_structure_get_uint64(s, "num-late", &late);
+            gst_structure_free(s);
+            if (r) {
+                st->pushed = pushed;
+                st->lost = lost;
+                st->late = late;
+                return true;
+            }
+        }*/
+        false
+    }
+
+    fn start(&self) {
+        self.pipeline.set_state(State::Playing).unwrap();
+    }
+
+    fn stop(&mut self) {
+        self.pipeline.set_state(State::Null).unwrap();
+    }
+
+    pub fn check_eos(&mut self) {
+        if let Some(sink) = self.pipeline.get_by_name("sink") {
+            self.check_sink(sink);
+        }
+    }
+
+    /* Check sink to make sure that last-sample is updating.
+     * If not, post an EOS message on the bus. */
+    fn check_sink(&mut self, sink: Element) {
+        match sink.get_property("last-sample") {
+            Ok(sample) => {
+                match sample.get::<Sample>() {
+                    Some(sample) => {
+                        match sample.get_buffer() {
+                            Some(buffer) => {
+                                let pts = buffer.get_pts();
+                                if pts == self.last_pts {
+                                    error!("PTS stuck at {}; posting EOS", pts);
+                                    self.bus.post(&Message::new_eos()
+                                        .src(Some(&sink)).build());
+                                }
+                                self.last_pts = pts;
+                            }
+                            None => error!("sample buffer missing"),
+                        }
+                    }
+                    None => error!("last-sample missing"),
+                }
+            }
+            Err(e) => warn!("last-sample: {:?}", e),
+        }
+    }
+}

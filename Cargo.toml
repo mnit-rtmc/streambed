@@ -8,3 +8,7 @@ repository = "https://github.com/mnit-rtmc/upstream"
 edition = "2018"
 
 [dependencies]
+glib = "0.8.2"
+gstreamer = "0.14.5"
+gstreamer-video = "0.14.5"
+log = "0.4.8"
