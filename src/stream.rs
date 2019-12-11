@@ -726,15 +726,16 @@ impl Stream {
         self.pipeline.set_state(State::Null).unwrap();
     }
 
-    pub fn check_eos(&mut self) {
+    pub fn check_eos(&mut self) -> Result<(), Error> {
         if let Some(sink) = self.pipeline.get_by_name("sink") {
-            self.check_sink(sink);
+            self.check_sink(sink)?;
         }
+        Ok(())
     }
 
     /* Check sink to make sure that last-sample is updating.
      * If not, post an EOS message on the bus. */
-    fn check_sink(&mut self, sink: Element) {
+    fn check_sink(&mut self, sink: Element) -> Result<(), Error> {
         match sink.get_property("last-sample") {
             Ok(sample) => {
                 match sample.get::<Sample>() {
@@ -745,7 +746,7 @@ impl Stream {
                                 if pts == self.last_pts {
                                     error!("PTS stuck at {}; posting EOS", pts);
                                     self.bus.post(&Message::new_eos()
-                                        .src(Some(&sink)).build());
+                                        .src(Some(&sink)).build())?;
                                 }
                                 self.last_pts = pts;
                             }
@@ -756,6 +757,7 @@ impl Stream {
                 }
             }
             Err(e) => warn!("last-sample: {:?}", e),
-        }
+        };
+        Ok(())
     }
 }
