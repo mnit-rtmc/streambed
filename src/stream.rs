@@ -116,7 +116,7 @@ pub struct StreamBuilder {
     /// Stream control
     control: Option<Box<dyn StreamControl>>,
     /// Pipeline for stream
-    pipeline: Option<Pipeline>,
+    pipeline: WeakRef<Pipeline>,
     /// Head element of pipeline
     head: Option<Element>,
 }
@@ -360,11 +360,10 @@ impl StreamBuilder {
     /// Build the stream
     pub fn build(mut self) -> Result<Stream, Error> {
         let name = format!("m{}", self.idx);
-        self.pipeline = Some(Pipeline::new(Some(&name)));
+        let pipeline = Pipeline::new(Some(&name));
+        self.pipeline = pipeline.downgrade();
         self.add_elements()?;
-        let pipeline = self.pipeline.take().unwrap();
         let bus = pipeline.get_bus().unwrap();
-        let pipeline_weak = pipeline.downgrade();
         let stream = Stream {
             pipeline,
             bus: bus.clone(),
@@ -373,7 +372,7 @@ impl StreamBuilder {
             lost: 0,
             late: 0,
         };
-        bus.add_watch(move |b, m| self.bus_message(b, m, &pipeline_weak));
+        bus.add_watch(move |b, m| self.bus_message(b, m));
         Ok(stream)
     }
 
@@ -609,15 +608,19 @@ impl StreamBuilder {
 
     /// Add an element to pipeline
     fn add_element(&mut self, elem: Element) -> Result<(), Error> {
-        debug!("add_element: {}", elem.get_name());
-        let pipeline = self.pipeline.as_ref().unwrap();
-        pipeline.add(&elem)?;
-        match self.head.take() {
-            Some(head) => self.link_src_sink(&elem, head)?,
-            None => (),
+        debug!("add_element: {} -- {}", elem.get_name(), self);
+        match self.pipeline.upgrade() {
+            Some(pipeline) => {
+                pipeline.add(&elem)?;
+                match self.head.take() {
+                    Some(head) => self.link_src_sink(&elem, head)?,
+                    None => (),
+                }
+                self.head = Some(elem);
+                Ok(())
+            }
+            None => Err(Error::Other("pipeline gone")),
         }
-        self.head = Some(elem);
-        Ok(())
     }
 
     /// Link a source element with a sink
@@ -648,9 +651,7 @@ impl StreamBuilder {
     }
 
     /// Handle bus messages
-    fn bus_message(&self, _bus: &Bus, msg: &Message, 
-        pipeline: &WeakRef<Pipeline>) -> glib::Continue
-    {
+    fn bus_message(&self, _bus: &Bus, msg: &Message) -> glib::Continue {
         match msg.view() {
             MessageView::AsyncDone(_) => {
                 info!("started -- {}", self);
@@ -666,7 +667,7 @@ impl StreamBuilder {
                 match (self.sink.crop(), chg.get_current(), &chg.get_src()) {
                     (Some(crop), State::Playing, Some(src)) => {
                         if src.is::<Pipeline>() {
-                            match pipeline.upgrade() {
+                            match self.pipeline.upgrade() {
                                 Some(pipeline) => {
                                     self.configure_vbox(&pipeline, &crop);
                                 }
@@ -700,7 +701,10 @@ impl StreamBuilder {
 
     /// Stop the stream
     fn stop(&self) {
-        info!("stop -- {}", self);
+        info!("stopped -- {}", self);
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.set_state(State::Null).unwrap();
+        }
         if let Some(control) = &self.control {
             control.stopped();
         }
