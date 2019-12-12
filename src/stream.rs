@@ -22,11 +22,11 @@ const SEC_NS: u64 = 1_000_000_000;
 /// RTSP stream number for video
 const STREAM_NUM_VIDEO: u32 = 0;
 
-/// Default stream latency (ms)
-const DEFAULT_LATENCY_MS: u32 = 100;
-
 /// Default source timeout (sec)
 const DEFAULT_TIMEOUT_SEC: u16 = 2;
+
+/// Default stream latency (ms)
+const DEFAULT_LATENCY_MS: u32 = 100;
 
 /// Default font size (pt)
 const DEFAULT_FONT_SZ: u32 = 22;
@@ -96,21 +96,21 @@ pub enum Sink {
 pub struct StreamBuilder {
     /// Index of stream
     idx: usize,
-    /// Source location URL
+    /// Source location URI
     location: String,
     /// Video encoding
     encoding: Encoding,
-    /// Stream properties (from SDP)
+    /// RTP stream properties (from SDP)
     sprops: Option<String>,
     /// Source timeout (sec)
     timeout: u16,
-    /// Sink config
-    sink: Sink,
     /// Latency (ms)
     latency: u32,
+    /// Sink config
+    sink: Sink,
     /// Overlay text
     overlay_text: Option<String>,
-    /// Font size (pt)
+    /// Font size (pt) -- source resolution
     font_sz: u32,
     /// Stream control
     control: Option<Box<dyn StreamControl>>,
@@ -314,15 +314,15 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified sink type
-    pub fn with_sink(mut self, sink: Sink) -> Self {
-        self.sink = sink;
-        self
-    }
-
     /// Use the specified latency (ms)
     pub fn with_latency(mut self, latency: u32) -> Self {
         self.latency = latency;
+        self
+    }
+
+    /// Use the specified sink type
+    pub fn with_sink(mut self, sink: Sink) -> Self {
+        self.sink = sink;
         self
     }
 
@@ -410,42 +410,31 @@ impl StreamBuilder {
     /// Add source elements
     fn add_source(&mut self) -> Result<(), Error> {
         if self.location.starts_with("udp://") {
-            let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
-            jtr.set_property("latency", &self.latency)?;
-            jtr.set_property("max-dropout-time", &self.timeout_ms())?;
-            self.add_element(jtr)?;
-            let fltr = make_element("capsfilter", None)?;
-            let caps = self.create_rtp_caps()?;
-            fltr.set_property("caps", &caps)?;
-            self.add_element(fltr)?;
-            let src = make_element("udpsrc", None)?;
-            src.set_property("uri", &self.location)?;
-            // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
-            src.set_property("timeout", &self.timeout_ns())?;
-            self.add_element(src)
-        } else if self.location.starts_with("http://") {
-            let src = make_element("souphttpsrc", None)?;
-            src.set_property("location", &self.location_http()?)?;
-            // Blocking request timeout (0 for no timeout)
-            src.set_property("timeout", &u32::from(self.timeout))?;
-            src.set_property("retries", &0)?;
-            self.add_element(src)
+            self.add_source_rtp()
         } else if self.location.starts_with("rtsp://") {
-            let src = make_element("rtspsrc", None)?;
-            src.set_property("location", &self.location)?;
-            src.set_property("latency", &self.latency)?;
-            src.set_property("tcp-timeout", &(10 * SEC_US))?;
-            // Retry TCP after UDP timeout (0 for disabled)
-            src.set_property("timeout", &self.timeout_us())?;
-            src.set_property("do-retransmission", &false)?;
-            src.connect("select-stream", false, |values| {
-                let num = values[1].get::<u32>().unwrap();
-                Some((num == STREAM_NUM_VIDEO).to_value())
-            })?;
-            self.add_element(src)
+            self.add_source_rtsp()
+        } else if self.location.starts_with("http://") {
+            self.add_source_http()
         } else {
             Err(Error::Other("invalid location"))
         }
+    }
+
+    /// Add source elements for an RTP stream
+    fn add_source_rtp(&mut self) -> Result<(), Error> {
+        let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
+        jtr.set_property("latency", &self.latency)?;
+        jtr.set_property("max-dropout-time", &self.timeout_ms())?;
+        self.add_element(jtr)?;
+        let fltr = make_element("capsfilter", None)?;
+        let caps = self.create_rtp_caps()?;
+        fltr.set_property("caps", &caps)?;
+        self.add_element(fltr)?;
+        let src = make_element("udpsrc", None)?;
+        src.set_property("uri", &self.location)?;
+        // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
+        src.set_property("timeout", &self.timeout_ns())?;
+        self.add_element(src)
     }
 
     /// Create RTP caps for filter element
@@ -460,6 +449,32 @@ impl StreamBuilder {
             return Ok(Caps::new_simple("application/x-rtp", &values[..]));
         }
         Ok(Caps::new_simple("application/x-rtp", &values[..]))
+    }
+
+    /// Add source elements for an RTSP stream
+    fn add_source_rtsp(&mut self) -> Result<(), Error> {
+        let src = make_element("rtspsrc", None)?;
+        src.set_property("location", &self.location)?;
+        src.set_property("tcp-timeout", &(10 * SEC_US))?;
+        // Retry TCP after UDP timeout (0 for disabled)
+        src.set_property("timeout", &self.timeout_us())?;
+        src.set_property("latency", &self.latency)?;
+        src.set_property("do-retransmission", &false)?;
+        src.connect("select-stream", false, |values| {
+            let num = values[1].get::<u32>().unwrap();
+            Some((num == STREAM_NUM_VIDEO).to_value())
+        })?;
+        self.add_element(src)
+    }
+
+    /// Add source elements for an HTTP stream
+    fn add_source_http(&mut self) -> Result<(), Error> {
+        let src = make_element("souphttpsrc", None)?;
+        src.set_property("location", &self.location_http()?)?;
+        // Blocking request timeout (0 for no timeout)
+        src.set_property("timeout", &u32::from(self.timeout))?;
+        src.set_property("retries", &0)?;
+        self.add_element(src)
     }
 
     /// Get HTTP location
