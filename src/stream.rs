@@ -25,7 +25,7 @@ const STREAM_NUM_VIDEO: u32 = 0;
 /// Default source timeout (sec)
 const DEFAULT_TIMEOUT_SEC: u16 = 2;
 
-/// Default stream latency (ms)
+/// Default buffering latency (ms)
 const DEFAULT_LATENCY_MS: u32 = 100;
 
 /// Default font size (pt)
@@ -98,13 +98,13 @@ pub struct StreamBuilder {
     idx: usize,
     /// Source location URI
     location: String,
-    /// Video encoding
+    /// Source encoding
     encoding: Encoding,
     /// RTP stream properties (from SDP)
     sprops: Option<String>,
     /// Source timeout (sec)
     timeout: u16,
-    /// Latency (ms)
+    /// Buffering latency (ms)
     latency: u32,
     /// Sink config
     sink: Sink,
@@ -314,13 +314,13 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified latency (ms)
+    /// Use the specified buffering latency (ms)
     pub fn with_latency(mut self, latency: u32) -> Self {
         self.latency = latency;
         self
     }
 
-    /// Use the specified sink type
+    /// Use the specified sink
     pub fn with_sink(mut self, sink: Sink) -> Self {
         self.sink = sink;
         self
@@ -332,7 +332,7 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified font size
+    /// Use the specified font size (pt)
     pub fn with_font_size(mut self, sz: u32) -> Self {
         self.font_sz = sz;
         self
