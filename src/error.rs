@@ -5,7 +5,6 @@ use std::num::ParseIntError;
 #[derive(Debug)]
 pub enum Error {
     InvalidCrop(),
-    MissingElement(&'static str),
     Bool(BoolError),
     ParseInt(ParseIntError),
     Other(&'static str),
@@ -15,7 +14,6 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::InvalidCrop() => write!(f, "invalid crop"),
-            Error::MissingElement(e) => write!(f, "missing {:?}", e),
             Error::Bool(e) => write!(f, "glib {:?}", e),
             Error::ParseInt(e) => write!(f, "parse {:?}", e),
             Error::Other(e) => write!(f, "{:?}", e),

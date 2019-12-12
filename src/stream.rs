@@ -10,7 +10,7 @@ use gstreamer::{
     Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::convert::TryFrom;
 
 /// One second (microsecond units)
@@ -100,7 +100,7 @@ pub struct StreamBuilder {
     location: String,
     /// Source encoding
     encoding: Encoding,
-    /// RTP stream properties (from SDP)
+    /// RTP source properties (from SDP)
     sprops: Option<String>,
     /// Source timeout (sec)
     timeout: u16,
@@ -246,6 +246,7 @@ impl MatrixCrop {
         let den = u32::from(self.height);
         let pix = height * num / den;
         let gap = height * self.vgap / (den * MatrixCrop::PERCENT * 2);
+        debug!("crop top: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 
@@ -255,6 +256,7 @@ impl MatrixCrop {
         let den = u32::from(self.height);
         let pix = height * num / den;
         let gap = height * self.vgap / (den * MatrixCrop::PERCENT * 2);
+        debug!("crop bottom: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 
@@ -264,6 +266,7 @@ impl MatrixCrop {
         let den = u32::from(self.width);
         let pix = width * num / den;
         let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
+        debug!("crop left: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 
@@ -273,6 +276,7 @@ impl MatrixCrop {
         let den = u32::from(self.width);
         let pix = width * num / den;
         let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
+        debug!("crop right: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 }
@@ -462,7 +466,7 @@ impl StreamBuilder {
     fn add_source_rtsp(&mut self) -> Result<(), Error> {
         let src = make_element("rtspsrc", None)?;
         src.set_property("location", &self.location)?;
-        src.set_property("tcp-timeout", &(10 * SEC_US))?;
+        src.set_property("tcp-timeout", &(2 * self.timeout_us()))?;
         // Retry TCP after UDP timeout (0 for disabled)
         src.set_property("timeout", &self.timeout_us())?;
         src.set_property("latency", &self.latency)?;
@@ -709,8 +713,13 @@ impl StreamBuilder {
 fn make_element(factory_name: &'static str, name: Option<&str>)
     -> Result<Element, Error>
 {
-    Ok(ElementFactory::make(factory_name, name)
-        .ok_or_else(|| Error::MissingElement(factory_name))?)
+    match ElementFactory::make(factory_name, name) {
+        Some(elem) => Ok(elem),
+        None => {
+            error!("make_element: {}", factory_name);
+            Err(Error::Other(factory_name))
+        }
+    }
 }
 
 /// Link a source element with a sink
