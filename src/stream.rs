@@ -12,6 +12,7 @@ use gstreamer::{
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{debug, error, info, warn};
 use std::convert::TryFrom;
+use std::fmt;
 
 /// One second (microsecond units)
 const SEC_US: u64 = 1_000_000;
@@ -278,6 +279,12 @@ impl MatrixCrop {
         let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
         debug!("crop right: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
+    }
+}
+
+impl fmt::Display for StreamBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Stream{} {}", self.idx, self.location)
     }
 }
 
@@ -602,14 +609,41 @@ impl StreamBuilder {
 
     /// Add an element to pipeline
     fn add_element(&mut self, elem: Element) -> Result<(), Error> {
-        info!("add_element: {}", elem.get_name());
+        debug!("add_element: {}", elem.get_name());
         let pipeline = self.pipeline.as_ref().unwrap();
         pipeline.add(&elem)?;
         match self.head.take() {
-            Some(head) => link_src_sink(&elem, head)?,
+            Some(head) => self.link_src_sink(&elem, head)?,
             None => (),
         }
         self.head = Some(elem);
+        Ok(())
+    }
+
+    /// Link a source element with a sink
+    fn link_src_sink(&self, src: &Element, sink: Element) -> Result<(), Error> {
+        debug!("link_src_sink: {} => {} -- {}", src.get_name(), sink.get_name(),
+            self);
+        src.link(&sink)?;
+        let sink = sink.downgrade(); // weak ref
+        src.connect_pad_added(move |src, src_pad| {
+            match sink.upgrade() {
+                Some(sink) => {
+                    match sink.get_static_pad("sink") {
+                        Some(sink_pad) => {
+                            let p0 = src.get_name();
+                            let p1 = sink.get_name();
+                            match src_pad.link(&sink_pad) {
+                                Ok(_) => debug!("pad linked: {} => {}", p0, p1),
+                                Err(_) => error!("pad link: {}", p0),
+                            }
+                        }
+                        None => error!("no sink pad"),
+                    }
+                }
+                None => error!("no sink to link"),
+            }
+        });
         Ok(())
     }
 
@@ -619,12 +653,13 @@ impl StreamBuilder {
     {
         match msg.view() {
             MessageView::AsyncDone(_) => {
+                info!("started -- {}", self);
                 if let Some(control) = &self.control {
                     control.started();
                 }
             }
             MessageView::Eos(_) => {
-                warn!("End of stream: {}", self.location);
+                warn!("end of stream -- {}", self);
                 self.stop();
             }
             MessageView::StateChanged(chg) => {
@@ -635,7 +670,7 @@ impl StreamBuilder {
                                 Some(pipeline) => {
                                     self.configure_vbox(&pipeline, &crop);
                                 }
-                                None => error!("pipeline is gone"),
+                                None => error!("pipeline gone -- {}", self),
                             }
                         }
                     }
@@ -643,17 +678,17 @@ impl StreamBuilder {
                 }
             }
             MessageView::Error(err) => {
-                error!("{}  {}", err.get_error(), self.location);
+                error!("{} -- {}", err.get_error(), self);
                 self.stop();
             }
             MessageView::Warning(wrn) => {
-                warn!("{}  {}", wrn.get_error(), self.location);
+                warn!("{} -- {}", wrn.get_error(), self);
                 self.stop();
             }
             MessageView::Element(elem) => {
                 if let Some(obj) = elem.get_src() {
                     if obj.get_name() == "GstUDPSrcTimeout" {
-                        error!("udpsrc timeout -- stopping stream");
+                        error!("udpsrc timeout -- {}", self);
                         self.stop();
                     }
                 }
@@ -665,6 +700,7 @@ impl StreamBuilder {
 
     /// Stop the stream
     fn stop(&self) {
+        info!("stop -- {}", self);
         if let Some(control) = &self.control {
             control.stopped();
         }
@@ -677,21 +713,21 @@ impl StreamBuilder {
                 Some(src_pad) => {
                     match src_pad.get_current_caps() {
                         Some(caps) => {
-                            match self.config_vbox_caps(vbx, caps, crop) {
-                                Err(_) => error!("failed to set vbox caps"),
+                            match self.config_vbox_props(vbx, caps, crop) {
+                                Err(_) => error!("vbox props -- {}", self),
                                 _ => (),
                             }
                         }
-                        None => error!("no current caps on vbox src pad"),
+                        None => error!("no caps on vbox src pad -- {}", self),
                     }
                 }
-                None => error!("no videobox src pad"),
+                None => error!("no vbox src pad -- {}", self),
             }
         }
     }
 
-    /// Configure videobox caps
-    fn config_vbox_caps(&self, vbx: Element, caps: Caps, crop: &MatrixCrop)
+    /// Configure videobox properties
+    fn config_vbox_props(&self, vbx: Element, caps: Caps, crop: &MatrixCrop)
         -> Result<(), Error>
     {
         for s in caps.iter() {
@@ -720,32 +756,6 @@ fn make_element(factory_name: &'static str, name: Option<&str>)
             Err(Error::Other(factory_name))
         }
     }
-}
-
-/// Link a source element with a sink
-fn link_src_sink(src: &Element, sink: Element) -> Result<(), Error> {
-    info!("link_src_sink: {} => {}", src.get_name(), sink.get_name());
-    src.link(&sink)?;
-    let sink = sink.downgrade(); // weak ref
-    src.connect_pad_added(move |src, src_pad| {
-        match sink.upgrade() {
-            Some(sink) => {
-                match sink.get_static_pad("sink") {
-                    Some(sink_pad) => {
-                        let p0 = src.get_name();
-                        let p1 = sink.get_name();
-                        match src_pad.link(&sink_pad) {
-                            Ok(_) => info!("pad linked: {} => {}", p0, p1),
-                            Err(_) => error!("pad link failed: {}", p0),
-                        }
-                    }
-                    None => error!("no sink pad"),
-                }
-            }
-            None => error!("no sink to link"),
-        }
-    });
-    Ok(())
 }
 
 impl Drop for Stream {
