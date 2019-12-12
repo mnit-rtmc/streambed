@@ -31,27 +31,6 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 /// Default font size (pt)
 const DEFAULT_FONT_SZ: u32 = 22;
 
-/// Pixel aspect ratio handling
-#[derive(Clone, Copy)]
-pub enum AspectRatio {
-    /// Adjust pixel aspect ratio to fill sink window
-    FILL,
-    /// Preserve pixel aspect ratio
-    PRESERVE,
-}
-
-/// Video sink
-pub enum Sink {
-    /// Fake sink (for testing)
-    FAKE,
-    /// UDP multicasting (mcast_addr, mcast_port, insert_config)
-    UDP(String, i32, bool),
-    /// Video Acceleration API
-    VAAPI(AspectRatio),
-    /// X-Video Image
-    XVIMAGE(AspectRatio),
-}
-
 /// Video encoding
 #[derive(Debug)]
 pub enum Encoding {
@@ -69,6 +48,15 @@ pub enum Encoding {
     H265,
     /// AV1 with RTP (future)
     AV1,
+}
+
+/// Pixel aspect ratio handling
+#[derive(Clone, Copy)]
+pub enum AspectRatio {
+    /// Adjust pixel aspect ratio to fill sink window
+    FILL,
+    /// Preserve pixel aspect ratio
+    PRESERVE,
 }
 
 /// Video matrix crop configuration
@@ -89,6 +77,18 @@ pub struct MatrixCrop {
     ///
     /// Value in hundredths of percent of window `0.00 to 100.00`
     vgap: u32,
+}
+
+/// Video sink
+pub enum Sink {
+    /// Fake sink (for testing)
+    FAKE,
+    /// UDP multicasting (mcast_addr, mcast_port, insert_config)
+    UDP(String, i32, bool),
+    /// Video Acceleration API
+    VAAPI(AspectRatio, Option<MatrixCrop>),
+    /// X-Video Image
+    XVIMAGE(AspectRatio, Option<MatrixCrop>),
 }
 
 /// Builder for video streams
@@ -112,8 +112,6 @@ pub struct StreamBuilder {
     overlay_text: Option<String>,
     /// Font size (pt)
     font_sz: u32,
-    /// Matrix crop configuration
-    crop: Option<MatrixCrop>,
     /// Stream control
     control: Option<Box<dyn StreamControl>>,
     /// Pipeline for stream
@@ -164,16 +162,24 @@ impl Sink {
         match self {
             Sink::FAKE => "fakesink",
             Sink::UDP(_, _, _) => "udpsink",
-            Sink::VAAPI(_) => "vaapisink",
-            Sink::XVIMAGE(_) => "xvimagesink",
+            Sink::VAAPI(_, _) => "vaapisink",
+            Sink::XVIMAGE(_, _) => "xvimagesink",
         }
     }
     /// Get the aspect ratio setting
     fn aspect_ratio(&self) -> Option<AspectRatio> {
         match self {
-            Sink::VAAPI(a) => Some(*a),
-            Sink::XVIMAGE(a) => Some(*a),
+            Sink::VAAPI(a, _) => Some(*a),
+            Sink::XVIMAGE(a, _) => Some(*a),
             _ => None,
+        }
+    }
+    /// Get the matrix crop setting
+    fn crop(&self) -> &Option<MatrixCrop> {
+        match self {
+            Sink::VAAPI(_, c) => &c,
+            Sink::XVIMAGE(_, c) => &c,
+            _ => &None,
         }
     }
 }
@@ -332,12 +338,6 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified crop code
-    pub fn with_crop(mut self, crop: Option<MatrixCrop>) -> Self {
-        self.crop = crop;
-        self
-    }
-
     /// Use the specified stream control
     pub fn with_control(mut self, control: Option<Box<dyn StreamControl>>)
         -> Self
@@ -396,11 +396,11 @@ impl StreamBuilder {
     /// Pipeline is built from sink to source.
     fn add_elements(&mut self) -> Result<(), Error> {
         self.add_element(self.create_sink()?)?;
+        if self.sink.crop().is_some() {
+            self.add_element(make_element("videobox", Some("vbox"))?)?;
+        }
         if self.has_text() {
             self.add_element(self.create_text()?)?;
-        }
-        if self.crop.is_some() {
-            self.add_element(make_element("videobox", Some("vbox"))?)?;
         }
         self.add_decode()?;
         self.add_source()?;
@@ -532,7 +532,7 @@ impl StreamBuilder {
     /// Create H264 decode element
     fn create_h264dec(&self) -> Result<Element, Error> {
         match self.sink {
-            Sink::VAAPI(_) => make_element("vaapih264dec", None),
+            Sink::VAAPI(_, _) => make_element("vaapih264dec", None),
             _ => {
                 let dec = make_element("avdec_h264", None)?;
                 dec.set_property("output-corrupt", &false)?;
@@ -602,8 +602,8 @@ impl StreamBuilder {
                 warn!("End of stream: {}", self.location);
                 self.stop();
             }
-            MessageView::StateChanged(change) => {
-                match (&self.crop, change.get_current(), &change.get_src()) {
+            MessageView::StateChanged(chg) => {
+                match (self.sink.crop(), chg.get_current(), &chg.get_src()) {
                     (Some(crop), State::Playing, Some(src)) => {
                         if src.is::<Pipeline>() {
                             match pipeline.upgrade() {
