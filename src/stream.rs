@@ -422,14 +422,21 @@ impl StreamBuilder {
 
     /// Add source elements for an RTP stream
     fn add_source_rtp(&mut self) -> Result<(), Error> {
-        let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
-        jtr.set_property("latency", &self.latency)?;
-        jtr.set_property("max-dropout-time", &self.timeout_ms())?;
-        self.add_element(jtr)?;
-        let fltr = make_element("capsfilter", None)?;
-        let caps = self.create_rtp_caps()?;
-        fltr.set_property("caps", &caps)?;
-        self.add_element(fltr)?;
+        match self.sink {
+            Sink::UDP(_, _, _) => {
+                self.add_element(make_element("queue", None)?)?;
+            }
+            _ => {
+                let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
+                jtr.set_property("latency", &self.latency)?;
+                jtr.set_property("max-dropout-time", &self.timeout_ms())?;
+                self.add_element(jtr)?;
+                let fltr = make_element("capsfilter", None)?;
+                let caps = self.create_rtp_caps()?;
+                fltr.set_property("caps", &caps)?;
+                self.add_element(fltr)?;
+            }
+        }
         let src = make_element("udpsrc", None)?;
         src.set_property("uri", &self.location)?;
         // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
@@ -591,16 +598,15 @@ impl StreamBuilder {
 
     /// Add an element to pipeline
     fn add_element(&mut self, elem: Element) -> Result<(), Error> {
+        info!("add_element: {}", elem.get_name());
         let pipeline = self.pipeline.as_ref().unwrap();
         pipeline.add(&elem)?;
         match self.head.take() {
-            Some(head) => {
-                link_src_sink(&elem, head)?;
-                self.head = Some(elem);
-                Ok(())
-            }
-            None => Ok(()),
+            Some(head) => link_src_sink(&elem, head)?,
+            None => (),
         }
+        self.head = Some(elem);
+        Ok(())
     }
 
     /// Handle bus messages
@@ -709,15 +715,19 @@ fn make_element(factory_name: &'static str, name: Option<&str>)
 
 /// Link a source element with a sink
 fn link_src_sink(src: &Element, sink: Element) -> Result<(), Error> {
+    info!("link_src_sink: {} => {}", src.get_name(), sink.get_name());
     src.link(&sink)?;
     let sink = sink.downgrade(); // weak ref
-    src.connect_pad_added(move |_src, src_pad| {
+    src.connect_pad_added(move |src, src_pad| {
         match sink.upgrade() {
             Some(sink) => {
                 match sink.get_static_pad("sink") {
                     Some(sink_pad) => {
-                        if let Err(_) = src_pad.link(&sink_pad) {
-                            error!("link pad failed");
+                        let p0 = src.get_name();
+                        let p1 = sink.get_name();
+                        match src_pad.link(&sink_pad) {
+                            Ok(_) => info!("pad linked: {} => {}", p0, p1),
+                            Err(_) => error!("pad link failed: {}", p0),
                         }
                     }
                     None => error!("no sink pad"),
