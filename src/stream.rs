@@ -6,8 +6,8 @@ use crate::error::Error;
 use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
 use gstreamer::{
     Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual, ElementFactory,
-    GstBinExt, GstObjectExt, Message, MessageView, PadExt, PadExtManual,
-    Pipeline, Sample, State, Structure,
+    GstBinExt, GstObjectExt, GObjectExtManualGst, Message, MessageView, PadExt,
+    PadExtManual, Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{debug, error, info, warn};
@@ -33,21 +33,23 @@ const DEFAULT_LATENCY_MS: u32 = 100;
 const DEFAULT_FONT_SZ: u32 = 22;
 
 /// Video encoding
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Encoding {
+    /// Raw video
+    RAW,
     /// Portable Network Graphics
     PNG,
     /// Motion JPEG
     MJPEG,
     /// MPEG-2 TS
     MPEG2,
-    /// MPEG-4 with RTP
+    /// MPEG-4
     MPEG4,
-    /// H.264 with RTP
+    /// H.264
     H264,
-    /// H.265 with RTP (future)
+    /// H.265
     H265,
-    /// AV1 with RTP (future)
+    /// AV1
     AV1,
 }
 
@@ -84,8 +86,8 @@ pub struct MatrixCrop {
 pub enum Sink {
     /// Fake sink (for testing)
     FAKE,
-    /// UDP multicasting (mcast_addr, mcast_port, insert_config)
-    UDP(String, i32, bool),
+    /// RTP over UDP (addr, port, encoding, insert_config)
+    RTP(String, i32, Encoding, bool),
     /// Video Acceleration API
     VAAPI(AspectRatio, Option<MatrixCrop>),
     /// X-Video Image
@@ -158,11 +160,18 @@ impl Default for Sink {
 }
 
 impl Sink {
+    /// Is the sink RTP?
+    fn is_rtp(&self) -> bool {
+        match self {
+            Sink::RTP(_, _, _, _) => true,
+            _ => false,
+        }
+    }
     /// Get the gstreamer factory name
     fn factory_name(&self) -> &'static str {
         match self {
             Sink::FAKE => "fakesink",
-            Sink::UDP(_, _, _) => "udpsink",
+            Sink::RTP(_, _, _, _) => "udpsink",
             Sink::VAAPI(_, _) => "vaapisink",
             Sink::XVIMAGE(_, _) => "xvimagesink",
         }
@@ -183,11 +192,43 @@ impl Sink {
             _ => &None,
         }
     }
+    /// Get the sink encoding
+    fn encoding(&self) -> Encoding {
+        match self {
+            Sink::RTP(_, _, encoding, _) => *encoding,
+            _ => Encoding::RAW,
+        }
+    }
 }
 
 impl Default for Encoding {
     fn default() -> Self {
         Encoding::PNG
+    }
+}
+
+impl Encoding {
+    /// Get RTP depayload factory name
+    fn rtp_depay(&self) -> Result<&'static str, Error> {
+        match self {
+            Encoding::MJPEG => Ok("rtpjpegdepay"),
+            Encoding::MPEG2 => Ok("rtpmp2tdepay"),
+            Encoding::MPEG4 => Ok("rtpmp4vdepay"),
+            Encoding::H264 => Ok("rtph264depay"),
+            Encoding::H265 => Ok("rtph265depay"),
+            _ => Err(Error::Other("invalid encoding for RTP")),
+        }
+    }
+    /// Get RTP payload factory name
+    fn rtp_pay(&self) -> Result<&'static str, Error> {
+        match self {
+            Encoding::MJPEG => Ok("rtpjpegpay"),
+            Encoding::MPEG2 => Ok("rtpmp2tpay"),
+            Encoding::MPEG4 => Ok("rtpmp4vpay"),
+            Encoding::H264 => Ok("rtph264pay"),
+            Encoding::H265 => Ok("rtph265pay"),
+            _ => Err(Error::Other("invalid encoding for RTP")),
+        }
     }
 }
 
@@ -393,12 +434,7 @@ impl StreamBuilder {
 
     /// Check if pipeline should have a text overlay
     fn has_text(&self) -> bool {
-        match self.encoding {
-            // NOTE: MJPEG and textoverlay don't play well together
-            //       due to timestamp issues.
-            Encoding::MJPEG => false,
-            _ => self.overlay_text.is_some(),
-        }
+        self.overlay_text.is_some()
     }
 
     /// Add all required elements to the pipeline
@@ -406,20 +442,120 @@ impl StreamBuilder {
     /// Pipeline is built from sink to source.
     fn add_elements(&mut self) -> Result<(), Error> {
         self.add_element(self.create_sink()?)?;
+        if self.needs_rtp_pay() {
+            self.add_rtp_pay()?;
+        }
+        if self.needs_encode() {
+            self.add_encode()?;
+        }
         if self.sink.crop().is_some() {
             self.add_element(make_element("videobox", Some("vbox"))?)?;
         }
         if self.has_text() {
             self.add_element(self.create_text()?)?;
         }
-        self.add_decode()?;
+        if self.needs_decode() {
+            self.add_decode()?;
+        }
+        if self.needs_rtp_depay() {
+            self.add_element(make_element(self.encoding.rtp_depay()?, None)?)?;
+        }
+        if self.needs_queue() {
+            self.add_queue()?;
+        }
         self.add_source()?;
         Ok(())
     }
 
+    /// Check if pipeline needs RTP payloader
+    fn needs_rtp_pay(&self) -> bool {
+        self.sink.is_rtp() && !self.is_rtp_passthru()
+    }
+
+    /// Check if pipeline needs RTP depayloader
+    fn needs_rtp_depay(&self) -> bool {
+        self.is_source_rtp() && !self.is_rtp_passthru()
+    }
+
+    /// Check if RTP can pass unchanged from source to sink
+    fn is_rtp_passthru(&self) -> bool {
+        self.is_source_rtp() && self.sink.is_rtp() && !self.needs_transcode()
+    }
+
+    /// Check if source is RTP
+    fn is_source_rtp(&self) -> bool {
+        self.location.starts_with("udp://")
+    }
+
+    /// Check if pipeline needs transcoding
+    fn needs_transcode(&self) -> bool {
+        self.encoding != self.sink.encoding() || self.has_text()
+    }
+
+    /// Check if pipeline needs encoding
+    fn needs_encode(&self) -> bool {
+        self.sink.encoding() != Encoding::RAW && self.needs_transcode()
+    }
+
+    /// Check if pipeline needs decoding
+    fn needs_decode(&self) -> bool {
+        self.encoding != Encoding::RAW && self.needs_transcode()
+    }
+
+    /// Check if pipeline needs a queue
+    fn needs_queue(&self) -> bool {
+        self.is_rtp_passthru() || self.encoding == Encoding::MPEG2
+    }
+
+    /// Add RTP payload element
+    fn add_rtp_pay(&mut self) -> Result<(), Error> {
+        let pay = make_element(self.encoding.rtp_pay()?, None)?;
+        if let Sink::RTP(_, _, _, true) = self.sink {
+            match self.sink.encoding() {
+                Encoding::MPEG4 => {
+                    // send configuration headers once per second
+                    pay.set_property("config-interval", &1u32)?;
+                }
+                Encoding::H264 | Encoding::H265 => {
+                    // send sprop parameter sets every IDR frame (-1)
+                    pay.set_property("config-interval", &(-1))?;
+                }
+                _ => (),
+            }
+        }
+        self.add_element(pay)
+    }
+
+    /// Add encode elements
+    fn add_encode(&mut self) -> Result<(), Error> {
+        match self.sink.encoding() {
+            Encoding::RAW => Ok(()),
+            Encoding::MPEG4 => {
+                self.add_element(make_element("avenc_mpeg4", None)?)
+            }
+            Encoding::H264 => {
+                let enc = make_element("x264enc", None)?;
+                enc.set_property_from_str("tune", &"zerolatency");
+                // With the default "medium" speed-preset, the pipeline can't
+                // run live.  With "superfast", the quality is still very good.
+                // ultrafast (1), superfast (2), veryfast (3), faster (4),
+                // fast (5), medium (6), etc.
+                enc.set_property_from_str("speed-preset", &"superfast");
+                self.add_element(enc)
+            },
+            Encoding::H265 => {
+                let enc = make_element("x265enc", None)?;
+                enc.set_property_from_str("tune", &"zerolatency");
+                enc.set_property_from_str("speed-preset", &"superfast");
+                self.add_element(enc)
+            },
+            _ => Err(Error::Other("invalid encoding")),
+        }
+    }
+
     /// Add source elements
     fn add_source(&mut self) -> Result<(), Error> {
-        if self.location.starts_with("udp://") {
+        if self.is_source_rtp() {
             self.add_source_rtp()
         } else if self.location.starts_with("rtsp://") {
             self.add_source_rtsp()
@@ -432,20 +568,16 @@ impl StreamBuilder {
 
     /// Add source elements for an RTP stream
     fn add_source_rtp(&mut self) -> Result<(), Error> {
-        match self.sink {
-            Sink::UDP(_, _, _) => {
-                self.add_element(make_element("queue", None)?)?;
-            }
-            _ => {
-                let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
-                jtr.set_property("latency", &self.latency)?;
-                jtr.set_property("max-dropout-time", &self.timeout_ms())?;
-                self.add_element(jtr)?;
-                let fltr = make_element("capsfilter", None)?;
-                let caps = self.create_rtp_caps()?;
-                fltr.set_property("caps", &caps)?;
-                self.add_element(fltr)?;
-            }
+        if !self.is_rtp_passthru() {
+            // FIXME: can we drop packets if encoding is too slow?
+            let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
+            jtr.set_property("latency", &self.latency)?;
+            jtr.set_property("max-dropout-time", &self.timeout_ms())?;
+            self.add_element(jtr)?;
+            let fltr = make_element("capsfilter", None)?;
+            let caps = self.create_rtp_caps()?;
+            fltr.set_property("caps", &caps)?;
+            self.add_element(fltr)?;
         }
         let src = make_element("udpsrc", None)?;
         src.set_property("uri", &self.location)?;
@@ -502,7 +634,7 @@ impl StreamBuilder {
         }
     }
 
-    /// Add decoder / depayloader elements
+    /// Add decode elements
     fn add_decode(&mut self) -> Result<(), Error> {
         match self.encoding {
             Encoding::PNG => {
@@ -515,50 +647,26 @@ impl StreamBuilder {
             }
             Encoding::MPEG2 => {
                 self.add_element(make_element("mpeg2dec", None)?)?;
-                self.add_element(make_element("tsdemux", None)?)?;
-                self.add_element(make_element("rtpmp2tdepay", None)?)?;
-                let que = make_element("queue", None)?;
-                que.set_property("max-size-time", &650_000_000)?;
-                self.add_element(que)
+                self.add_element(make_element("tsdemux", None)?)
             }
             Encoding::MPEG4 => {
-                match self.sink {
-                    Sink::UDP(_, _, true) => {
-                        let pay = make_element("rtpmp4vpay", None)?;
-                        // send configuration headers once per second
-                        pay.set_property("config-interval", &1u32)?;
-                        self.add_element(pay)?;
-                        self.add_element(make_element("rtpmp4vdepay", None)?)
-                    }
-                    // don't need to depay for UDP
-                    Sink::UDP(_, _, false) => Ok(()),
-                    _ => {
-                        let dec = make_element("avdec_mpeg4", None)?;
-                        dec.set_property("output-corrupt", &false)?;
-                        self.add_element(dec)?;
-                        self.add_element(make_element("rtpmp4vdepay", None)?)
-                    }
-                }
+                let dec = make_element("avdec_mpeg4", None)?;
+                dec.set_property("output-corrupt", &false)?;
+                self.add_element(dec)
             }
-            Encoding::H264 => {
-                match self.sink {
-                    Sink::UDP(_, _, true) => {
-                        let pay = make_element("rtph264pay", None)?;
-                        // send sprop parameter sets every IDR frame (-1)
-                        pay.set_property("config-interval", &(-1))?;
-                        self.add_element(pay)?;
-                        self.add_element(make_element("rtph264depay", None)?)
-                    }
-                    // don't need to depay for UDP
-                    Sink::UDP(_, _, false) => Ok(()),
-                    _ => {
-                        self.add_element(self.create_h264dec()?)?;
-                        self.add_element(make_element("rtph264depay", None)?)
-                    }
-                }
-            },
+            Encoding::H264 => self.add_element(self.create_h264dec()?),
+            Encoding::H265 => {
+                self.add_element(make_element("libde265dec", None)?)
+            }
             _ => Err(Error::Other("invalid encoding")),
         }
+    }
+
+    /// Add queue element
+    fn add_queue(&mut self) -> Result<(), Error> {
+        let que = make_element("queue", None)?;
+        que.set_property("max-size-time", &650_000_000)?;
+        self.add_element(que)
     }
 
     /// Create H264 decode element
@@ -580,7 +688,7 @@ impl StreamBuilder {
             sink.set_property("force-aspect-ratio", &aspect.as_bool())?;
         }
         match &self.sink {
-            Sink::UDP(addr, port, _) => {
+            Sink::RTP(addr, port, _, _) => {
                 sink.set_property("host", addr)?;
                 sink.set_property("port", port)?;
                 sink.set_property("ttl-mc", &15)?;
@@ -593,16 +701,16 @@ impl StreamBuilder {
     /// Create a text overlay element
     fn create_text(&self) -> Result<Element, Error> {
         let font = format!("Overpass, Bold {}", self.font_sz);
-        let txt = make_element("textoverlay", None)?;
+        let txt = make_element("textoverlay", Some("txt"))?;
         txt.set_property("text", &self.overlay_text.as_ref().unwrap())?;
         txt.set_property("font-desc", &font)?;
         txt.set_property("shaded-background", &false)?;
-        txt.set_property("color", &0xFF_FF_FF_E0u32)?;
-        txt.set_property("halignment", &0i32)?; // left
-        txt.set_property("valignment", &2i32)?; // top
-        txt.set_property("wrap-mode", &(-1i32))?; // no wrapping
-        txt.set_property("xpad", &48i32)?;
-        txt.set_property("ypad", &36i32)?;
+        txt.set_property("color", &0xFF_FF_FF_E0u32)?; // yellowish white
+        txt.set_property_from_str("wrap-mode", &"none");
+        txt.set_property_from_str("halignment", &"right");
+        txt.set_property_from_str("valignment", &"top");
+        txt.set_property("xpad", &48)?; // from right edge
+        txt.set_property("ypad", &36)?; // from top edge
         Ok(txt)
     }
 
