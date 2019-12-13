@@ -1,12 +1,13 @@
 use glib::error::BoolError;
 use std::fmt;
-use std::num::ParseIntError;
+use std::num::{ParseIntError, TryFromIntError};
 
 #[derive(Debug)]
 pub enum Error {
     InvalidCrop(),
     Bool(BoolError),
     ParseInt(ParseIntError),
+    TryFromInt(TryFromIntError),
     Other(&'static str),
 }
 
@@ -16,6 +17,7 @@ impl fmt::Display for Error {
             Error::InvalidCrop() => write!(f, "invalid crop"),
             Error::Bool(e) => write!(f, "glib {:?}", e),
             Error::ParseInt(e) => write!(f, "parse {:?}", e),
+            Error::TryFromInt(e) => write!(f, "try_from {:?}", e),
             Error::Other(e) => write!(f, "{:?}", e),
         }
     }
@@ -40,5 +42,11 @@ impl From<BoolError> for Error {
 impl From<ParseIntError> for Error {
     fn from(e: ParseIntError) -> Self {
         Error::ParseInt(e)
+    }
+}
+
+impl From<TryFromIntError> for Error {
+    fn from(e: TryFromIntError) -> Self {
+        Error::TryFromInt(e)
     }
 }

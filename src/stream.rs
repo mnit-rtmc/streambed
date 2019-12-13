@@ -32,6 +32,9 @@ const DEFAULT_LATENCY_MS: u32 = 100;
 /// Default font size (pt)
 const DEFAULT_FONT_SZ: u32 = 22;
 
+/// Default height (px)
+const DEFAULT_HEIGHT: u32 = 720;
+
 /// Video encoding
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Encoding {
@@ -700,17 +703,13 @@ impl StreamBuilder {
 
     /// Create a text overlay element
     fn create_text(&self) -> Result<Element, Error> {
-        let font = format!("Overpass, Bold {}", self.font_sz);
         let txt = make_element("textoverlay", Some("txt"))?;
         txt.set_property("text", &self.overlay_text.as_ref().unwrap())?;
-        txt.set_property("font-desc", &font)?;
         txt.set_property("shaded-background", &false)?;
         txt.set_property("color", &0xFF_FF_FF_E0u32)?; // yellowish white
         txt.set_property_from_str("wrap-mode", &"none");
         txt.set_property_from_str("halignment", &"right");
         txt.set_property_from_str("valignment", &"top");
-        txt.set_property("xpad", &48)?; // from right edge
-        txt.set_property("ypad", &36)?; // from top edge
         Ok(txt)
     }
 
@@ -772,18 +771,15 @@ impl StreamBuilder {
                 self.stop();
             }
             MessageView::StateChanged(chg) => {
-                match (self.sink.crop(), chg.get_current(), &chg.get_src()) {
-                    (Some(crop), State::Playing, Some(src)) => {
-                        if src.is::<Pipeline>() {
-                            match self.pipeline.upgrade() {
-                                Some(pipeline) => {
-                                    self.configure_vbox(&pipeline, &crop);
-                                }
-                                None => error!("pipeline gone -- {}", self),
+                if self.has_text() || self.sink.crop().is_some() {
+                    match (chg.get_current(), &chg.get_src()) {
+                        (State::Playing, Some(src)) => {
+                            if src.is::<Pipeline>() {
+                                self.configure_playing();
                             }
                         }
+                        _ => (),
                     }
-                    _ => (),
                 }
             }
             MessageView::Error(err) => {
@@ -816,6 +812,61 @@ impl StreamBuilder {
         if let Some(control) = &self.control {
             control.stopped();
         }
+    }
+
+    /// Configure elements when state is playing
+    fn configure_playing(&self) {
+        match self.pipeline.upgrade() {
+            Some(pipeline) => {
+                if self.has_text() {
+                    self.configure_text(&pipeline);
+                }
+                if let Some(crop) = self.sink.crop() {
+                    self.configure_vbox(&pipeline, &crop);
+                }
+            }
+            None => error!("pipeline gone -- {}", self),
+        }
+    }
+
+    /// Configure text overlay element
+    fn configure_text(&self, pipeline: &Pipeline) {
+        if let Some(txt) = pipeline.get_by_name("txt") {
+            match txt.get_static_pad("src") {
+                Some(src_pad) => {
+                    match src_pad.get_current_caps() {
+                        Some(caps) => {
+                            match self.config_txt_props(txt, caps) {
+                                Err(_) => error!("txt props -- {}", self),
+                                _ => (),
+                            }
+                        }
+                        None => error!("no caps on txt src pad -- {}", self),
+                    }
+                }
+                None => error!("no txt src pad -- {}", self),
+            }
+        }
+    }
+
+    /// Configure text overlay properties
+    fn config_txt_props(&self, txt: Element, caps: Caps) -> Result<(), Error> {
+        for s in caps.iter() {
+            match s.get::<i32>("height") {
+                Some(height) => {
+                    let sz = u32::try_from(height)? * self.font_sz
+                        / DEFAULT_HEIGHT;
+                    let margin = i32::try_from(sz / 2)?;
+                    debug!("font sz: {} -- {}", sz, self);
+                    let font = format!("Overpass, Bold {}", sz);
+                    txt.set_property("font-desc", &font)?;
+                    txt.set_property("ypad", &margin)?; // from top edge
+                    txt.set_property("xpad", &margin)?; // from right edge
+                }
+                _ => (),
+            }
+        }
+        Ok(())
     }
 
     /// Configure videobox element
