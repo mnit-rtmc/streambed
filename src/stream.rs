@@ -507,7 +507,9 @@ impl StreamBuilder {
 
     /// Check if pipeline needs a queue
     fn needs_queue(&self) -> bool {
-        self.is_rtp_passthru() || self.encoding == Encoding::MPEG2
+        self.is_rtp_passthru() ||
+        self.encoding == Encoding::MPEG2 ||
+        self.needs_encode()
     }
 
     /// Add RTP payload element
@@ -572,7 +574,6 @@ impl StreamBuilder {
     /// Add source elements for an RTP stream
     fn add_source_rtp(&mut self) -> Result<(), Error> {
         if !self.is_rtp_passthru() {
-            // FIXME: can we drop packets if encoding is too slow?
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
             jtr.set_property("latency", &self.latency)?;
             jtr.set_property("max-dropout-time", &self.timeout_ms())?;
@@ -668,7 +669,9 @@ impl StreamBuilder {
     /// Add queue element
     fn add_queue(&mut self) -> Result<(), Error> {
         let que = make_element("queue", None)?;
-        que.set_property("max-size-time", &650_000_000)?;
+        que.set_property("max-size-time", &(SEC_NS / 2))?;
+        // leak (drop) packets -- when encoding cannot keep up
+        que.set_property_from_str("leaky", &"downstream");
         self.add_element(que)
     }
 
@@ -854,7 +857,7 @@ impl StreamBuilder {
         for s in caps.iter() {
             match s.get::<i32>("height") {
                 Some(height) => {
-                    let sz = u32::try_from(height)? * self.font_sz
+                    let sz = self.font_sz * u32::try_from(height)?
                         / DEFAULT_HEIGHT;
                     let margin = i32::try_from(sz / 2)?;
                     debug!("font sz: {} -- {}", sz, self);
