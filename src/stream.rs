@@ -10,7 +10,7 @@ use gstreamer::{
     PadExtManual, Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -490,6 +490,11 @@ impl StreamBuilder {
         self.location.starts_with("udp://")
     }
 
+    /// Check if source is RTSP
+    fn is_source_rtsp(&self) -> bool {
+        self.location.starts_with("rtsp://")
+    }
+
     /// Check if pipeline needs transcoding
     fn needs_transcode(&self) -> bool {
         self.encoding != self.sink.encoding() || self.has_text()
@@ -578,6 +583,8 @@ impl StreamBuilder {
             jtr.set_property("latency", &self.latency)?;
             jtr.set_property("max-dropout-time", &self.timeout_ms())?;
             self.add_element(jtr)?;
+        }
+        if !self.is_source_rtsp() {
             let fltr = make_element("capsfilter", None)?;
             let caps = self.create_rtp_caps()?;
             fltr.set_property("caps", &caps)?;
@@ -670,8 +677,10 @@ impl StreamBuilder {
     fn add_queue(&mut self) -> Result<(), Error> {
         let que = make_element("queue", None)?;
         que.set_property("max-size-time", &(SEC_NS / 2))?;
-        // leak (drop) packets -- when encoding cannot keep up
-        que.set_property_from_str("leaky", &"downstream");
+        if self.needs_encode() {
+            // leak (drop) packets -- when encoding cannot keep up
+            que.set_property_from_str("leaky", &"downstream");
+        }
         self.add_element(que)
     }
 
@@ -718,7 +727,7 @@ impl StreamBuilder {
 
     /// Add an element to pipeline
     fn add_element(&mut self, elem: Element) -> Result<(), Error> {
-        debug!("add_element: {} -- {}", elem.get_name(), self);
+        trace!("add_element: {} -- {}", elem.get_name(), self);
         match self.pipeline.upgrade() {
             Some(pipeline) => {
                 pipeline.add(&elem)?;
