@@ -1,10 +1,10 @@
 [Unit]
-Description=Upstream Video Streamer
+Description=Streambed Video Streamer
 StartLimitIntervalSec=0
 
 [Service]
 Environment=RUST_LOG=warn
-ExecStart=/usr/local/bin/upstream
+ExecStart=/usr/local/bin/streambed
 Restart=always
 RestartSec=2
 User=tms
