@@ -578,13 +578,11 @@ impl StreamBuilder {
 
     /// Add source elements for an RTP stream
     fn add_source_rtp(&mut self) -> Result<(), Error> {
-        if !self.is_rtp_passthru() {
+        if !self.is_source_rtsp() {
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
             jtr.set_property("latency", &self.latency)?;
             jtr.set_property("max-dropout-time", &self.timeout_ms())?;
             self.add_element(jtr)?;
-        }
-        if !self.is_source_rtsp() {
             let fltr = make_element("capsfilter", None)?;
             let caps = self.create_rtp_caps()?;
             fltr.set_property("caps", &caps)?;
@@ -676,7 +674,7 @@ impl StreamBuilder {
     /// Add queue element
     fn add_queue(&mut self) -> Result<(), Error> {
         let que = make_element("queue", None)?;
-        que.set_property("max-size-time", &(SEC_NS / 2))?;
+        que.set_property("max-size-time", &SEC_NS)?;
         if self.needs_encode() {
             // leak (drop) packets -- when encoding cannot keep up
             que.set_property_from_str("leaky", &"downstream");
