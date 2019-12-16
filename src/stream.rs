@@ -29,8 +29,8 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 /// Default buffering latency (ms)
 const DEFAULT_LATENCY_MS: u32 = 100;
 
-/// Default font size (pt)
-const DEFAULT_FONT_SZ: u32 = 22;
+/// Font size (pt), using default height
+const FONT_SZ: u32 = 22;
 
 /// Default height (px)
 const DEFAULT_HEIGHT: u32 = 720;
@@ -122,8 +122,6 @@ pub struct StreamBuilder {
     sink: Sink,
     /// Overlay text
     overlay_text: Option<String>,
-    /// Font size (pt) -- source resolution
-    font_sz: u32,
     /// Stream control
     control: Option<Box<dyn StreamControl>>,
     /// Pipeline for stream
@@ -424,7 +422,6 @@ impl StreamBuilder {
     pub fn new(idx: usize) -> Self {
         StreamBuilder {
             idx,
-            font_sz: DEFAULT_FONT_SZ,
             ..Default::default()
         }
     }
@@ -444,12 +441,6 @@ impl StreamBuilder {
     /// Use the specified overlay text
     pub fn with_overlay_text(mut self, overlay_text: Option<&str>) -> Self {
         self.overlay_text = overlay_text.map(|t| t.to_string());
-        self
-    }
-
-    /// Use the specified font size (pt)
-    pub fn with_font_size(mut self, sz: u32) -> Self {
-        self.font_sz = sz;
         self
     }
 
@@ -900,8 +891,7 @@ impl StreamBuilder {
         for s in caps.iter() {
             match s.get::<i32>("height") {
                 Some(height) => {
-                    let sz = self.font_sz * u32::try_from(height)?
-                        / DEFAULT_HEIGHT;
+                    let sz = FONT_SZ * u32::try_from(height)? / DEFAULT_HEIGHT;
                     let margin = i32::try_from(sz / 2)?;
                     debug!("font sz: {} -- {}", sz, self);
                     let font = format!("Overpass, Bold {}", sz);
