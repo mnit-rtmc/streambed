@@ -56,6 +56,20 @@ pub enum Encoding {
     AV1,
 }
 
+/// Video source
+pub struct Source {
+    /// Source location URI
+    location: String,
+    /// Source encoding
+    encoding: Encoding,
+    /// RTP source properties (from SDP)
+    sprops: Option<String>,
+    /// Source timeout (sec)
+    timeout: u16,
+    /// Buffering latency (ms)
+    latency: u32,
+}
+
 /// Pixel aspect ratio handling
 #[derive(Clone, Copy)]
 pub enum AspectRatio {
@@ -102,17 +116,9 @@ pub enum Sink {
 pub struct StreamBuilder {
     /// Index of stream
     idx: usize,
-    /// Source location URI
-    location: String,
-    /// Source encoding
-    encoding: Encoding,
-    /// RTP source properties (from SDP)
-    sprops: Option<String>,
-    /// Source timeout (sec)
-    timeout: u16,
-    /// Buffering latency (ms)
-    latency: u32,
-    /// Sink config
+    /// Video source config
+    source: Source,
+    /// Video sink config
     sink: Sink,
     /// Overlay text
     overlay_text: Option<String>,
@@ -156,57 +162,9 @@ impl Default for AspectRatio {
     }
 }
 
-impl Default for Sink {
-    fn default() -> Self {
-        Sink::FAKE
-    }
-}
-
-impl Sink {
-    /// Is the sink RTP?
-    fn is_rtp(&self) -> bool {
-        match self {
-            Sink::RTP(_, _, _, _) => true,
-            _ => false,
-        }
-    }
-    /// Get the gstreamer factory name
-    fn factory_name(&self) -> &'static str {
-        match self {
-            Sink::FAKE => "fakesink",
-            Sink::RTP(_, _, _, _) => "udpsink",
-            Sink::VAAPI(_, _) => "vaapisink",
-            Sink::XVIMAGE(_, _) => "xvimagesink",
-        }
-    }
-    /// Get the aspect ratio setting
-    fn aspect_ratio(&self) -> Option<AspectRatio> {
-        match self {
-            Sink::VAAPI(a, _) => Some(*a),
-            Sink::XVIMAGE(a, _) => Some(*a),
-            _ => None,
-        }
-    }
-    /// Get the matrix crop setting
-    fn crop(&self) -> &Option<MatrixCrop> {
-        match self {
-            Sink::VAAPI(_, c) => &c,
-            Sink::XVIMAGE(_, c) => &c,
-            _ => &None,
-        }
-    }
-    /// Get the sink encoding
-    fn encoding(&self) -> Encoding {
-        match self {
-            Sink::RTP(_, _, encoding, _) => *encoding,
-            _ => Encoding::RAW,
-        }
-    }
-}
-
 impl Default for Encoding {
     fn default() -> Self {
-        Encoding::PNG
+        Encoding::RAW
     }
 }
 
@@ -232,6 +190,86 @@ impl Encoding {
             Encoding::H265 => Ok("rtph265pay"),
             _ => Err(Error::Other("invalid encoding for RTP")),
         }
+    }
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Source {
+            location: String::new(),
+            encoding: Encoding::default(),
+            sprops: None,
+            timeout: DEFAULT_TIMEOUT_SEC,
+            latency: DEFAULT_LATENCY_MS,
+        }
+    }
+}
+
+impl Source {
+
+    /// Use the specified location
+    pub fn with_location(mut self, location: &str) -> Self {
+        self.location = location.to_string();
+        self
+    }
+
+    /// Use the specified encoding
+    pub fn with_encoding(mut self, encoding: Encoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+
+    /// Use the specified SDP properties
+    pub fn with_sprops(mut self, sprops: Option<&str>) -> Self {
+        self.sprops = sprops.map(|s| s.to_string());
+        self
+    }
+
+    /// Use the specified timeout (sec)
+    pub fn with_timeout(mut self, timeout: u16) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Use the specified buffering latency (ms)
+    pub fn with_latency(mut self, latency: u32) -> Self {
+        self.latency = latency;
+        self
+    }
+
+    /// Get timeout as seconds
+    fn timeout_s(&self) -> u32 {
+        u32::from(self.timeout)
+    }
+
+    /// Get timeout as milliseconds
+    fn timeout_ms(&self) -> u32 {
+        u32::from(self.timeout) * 1_000
+    }
+
+    /// Get timeout as microseconds
+    fn timeout_us(&self) -> u64 {
+        u64::from(self.timeout) * SEC_US
+    }
+
+    /// Get timeout as nanoseconds
+    fn timeout_ns(&self) -> u64 {
+        u64::from(self.timeout) * SEC_NS
+    }
+
+    /// Check if source is RTP
+    fn is_rtp(&self) -> bool {
+        self.location.starts_with("udp://")
+    }
+
+    /// Check if source is RTSP
+    fn is_rtsp(&self) -> bool {
+        self.location.starts_with("rtsp://")
+    }
+
+    /// Check if source is HTTP
+    fn is_http(&self) -> bool {
+        self.location.starts_with("http://")
     }
 }
 
@@ -326,9 +364,57 @@ impl MatrixCrop {
     }
 }
 
+impl Default for Sink {
+    fn default() -> Self {
+        Sink::FAKE
+    }
+}
+
+impl Sink {
+    /// Is the sink RTP?
+    fn is_rtp(&self) -> bool {
+        match self {
+            Sink::RTP(_, _, _, _) => true,
+            _ => false,
+        }
+    }
+    /// Get the gstreamer factory name
+    fn factory_name(&self) -> &'static str {
+        match self {
+            Sink::FAKE => "fakesink",
+            Sink::RTP(_, _, _, _) => "udpsink",
+            Sink::VAAPI(_, _) => "vaapisink",
+            Sink::XVIMAGE(_, _) => "xvimagesink",
+        }
+    }
+    /// Get the aspect ratio setting
+    fn aspect_ratio(&self) -> Option<AspectRatio> {
+        match self {
+            Sink::VAAPI(a, _) => Some(*a),
+            Sink::XVIMAGE(a, _) => Some(*a),
+            _ => None,
+        }
+    }
+    /// Get the matrix crop setting
+    fn crop(&self) -> &Option<MatrixCrop> {
+        match self {
+            Sink::VAAPI(_, c) => &c,
+            Sink::XVIMAGE(_, c) => &c,
+            _ => &None,
+        }
+    }
+    /// Get the sink encoding
+    fn encoding(&self) -> Encoding {
+        match self {
+            Sink::RTP(_, _, encoding, _) => *encoding,
+            _ => Encoding::RAW,
+        }
+    }
+}
+
 impl fmt::Display for StreamBuilder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Stream{} {}", self.idx, self.location)
+        write!(f, "Stream{} {}", self.idx, self.source.location)
     }
 }
 
@@ -338,40 +424,14 @@ impl StreamBuilder {
     pub fn new(idx: usize) -> Self {
         StreamBuilder {
             idx,
-            timeout: DEFAULT_TIMEOUT_SEC,
-            latency: DEFAULT_LATENCY_MS,
             font_sz: DEFAULT_FONT_SZ,
             ..Default::default()
         }
     }
 
-    /// Use the specified location
-    pub fn with_location(mut self, location: &str) -> Self {
-        self.location = location.to_string();
-        self
-    }
-
-    /// Use the specified encoding
-    pub fn with_encoding(mut self, encoding: Encoding) -> Self {
-        self.encoding = encoding;
-        self
-    }
-
-    /// Use the specified SDP properties
-    pub fn with_sprops(mut self, sprops: Option<&str>) -> Self {
-        self.sprops = sprops.map(|s| s.to_string());
-        self
-    }
-
-    /// Use the specified timeout (sec)
-    pub fn with_timeout(mut self, timeout: u16) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    /// Use the specified buffering latency (ms)
-    pub fn with_latency(mut self, latency: u32) -> Self {
-        self.latency = latency;
+    /// Use the specified source
+    pub fn with_source(mut self, source: Source) -> Self {
+        self.source = source;
         self
     }
 
@@ -420,21 +480,6 @@ impl StreamBuilder {
         Ok(stream)
     }
 
-    /// Get timeout as milliseconds
-    fn timeout_ms(&self) -> u32 {
-        u32::from(self.timeout) * 1_000
-    }
-
-    /// Get timeout as microseconds
-    fn timeout_us(&self) -> u64 {
-        u64::from(self.timeout) * SEC_US
-    }
-
-    /// Get timeout as nanoseconds
-    fn timeout_ns(&self) -> u64 {
-        u64::from(self.timeout) * SEC_NS
-    }
-
     /// Check if pipeline should have a text overlay
     fn has_text(&self) -> bool {
         self.overlay_text.is_some()
@@ -461,7 +506,8 @@ impl StreamBuilder {
             self.add_decode()?;
         }
         if self.needs_rtp_depay() {
-            self.add_element(make_element(self.encoding.rtp_depay()?, None)?)?;
+            let depay = make_element(self.source.encoding.rtp_depay()?, None)?;
+            self.add_element(depay)?;
         }
         if self.needs_queue() {
             self.add_queue()?;
@@ -477,27 +523,17 @@ impl StreamBuilder {
 
     /// Check if pipeline needs RTP depayloader
     fn needs_rtp_depay(&self) -> bool {
-        self.is_source_rtp() && !self.is_rtp_passthru()
+        self.source.is_rtp() && !self.is_rtp_passthru()
     }
 
     /// Check if RTP can pass unchanged from source to sink
     fn is_rtp_passthru(&self) -> bool {
-        self.is_source_rtp() && self.sink.is_rtp() && !self.needs_transcode()
-    }
-
-    /// Check if source is RTP
-    fn is_source_rtp(&self) -> bool {
-        self.location.starts_with("udp://")
-    }
-
-    /// Check if source is RTSP
-    fn is_source_rtsp(&self) -> bool {
-        self.location.starts_with("rtsp://")
+        self.source.is_rtp() && self.sink.is_rtp() && !self.needs_transcode()
     }
 
     /// Check if pipeline needs transcoding
     fn needs_transcode(&self) -> bool {
-        self.encoding != self.sink.encoding() || self.has_text()
+        self.source.encoding != self.sink.encoding() || self.has_text()
     }
 
     /// Check if pipeline needs encoding
@@ -507,19 +543,19 @@ impl StreamBuilder {
 
     /// Check if pipeline needs decoding
     fn needs_decode(&self) -> bool {
-        self.encoding != Encoding::RAW && self.needs_transcode()
+        self.source.encoding != Encoding::RAW && self.needs_transcode()
     }
 
     /// Check if pipeline needs a queue
     fn needs_queue(&self) -> bool {
         self.is_rtp_passthru() ||
-        self.encoding == Encoding::MPEG2 ||
+        self.source.encoding == Encoding::MPEG2 ||
         self.needs_encode()
     }
 
     /// Add RTP payload element
     fn add_rtp_pay(&mut self) -> Result<(), Error> {
-        let pay = make_element(self.encoding.rtp_pay()?, None)?;
+        let pay = make_element(self.source.encoding.rtp_pay()?, None)?;
         if let Sink::RTP(_, _, _, true) = self.sink {
             match self.sink.encoding() {
                 Encoding::MPEG4 => {
@@ -565,11 +601,11 @@ impl StreamBuilder {
 
     /// Add source elements
     fn add_source(&mut self) -> Result<(), Error> {
-        if self.is_source_rtp() {
+        if self.source.is_rtp() {
             self.add_source_rtp()
-        } else if self.location.starts_with("rtsp://") {
+        } else if self.source.is_rtsp() {
             self.add_source_rtsp()
-        } else if self.location.starts_with("http://") {
+        } else if self.source.is_http() {
             self.add_source_http()
         } else {
             Err(Error::Other("invalid location"))
@@ -578,10 +614,10 @@ impl StreamBuilder {
 
     /// Add source elements for an RTP stream
     fn add_source_rtp(&mut self) -> Result<(), Error> {
-        if !self.is_source_rtsp() {
+        if !self.source.is_rtsp() {
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
-            jtr.set_property("latency", &self.latency)?;
-            jtr.set_property("max-dropout-time", &self.timeout_ms())?;
+            jtr.set_property("latency", &self.source.latency)?;
+            jtr.set_property("max-dropout-time", &self.source.timeout_ms())?;
             self.add_element(jtr)?;
             let fltr = make_element("capsfilter", None)?;
             let caps = self.create_rtp_caps()?;
@@ -589,9 +625,9 @@ impl StreamBuilder {
             self.add_element(fltr)?;
         }
         let src = make_element("udpsrc", None)?;
-        src.set_property("uri", &self.location)?;
+        src.set_property("uri", &self.source.location)?;
         // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
-        src.set_property("timeout", &self.timeout_ns())?;
+        src.set_property("timeout", &self.source.timeout_ns())?;
         self.add_element(src)
     }
 
@@ -599,10 +635,10 @@ impl StreamBuilder {
     fn create_rtp_caps(&self) -> Result<Caps, Error> {
         let mut values: Vec<(&str, &dyn ToSendValue)> =
             vec![("clock-rate", &90_000)];
-        if let Encoding::MPEG2 = self.encoding {
+        if let Encoding::MPEG2 = self.source.encoding {
             values.push(("encoding-name", &"MP2T"));
         }
-        if let Some(sprops) = &self.sprops {
+        if let Some(sprops) = &self.source.sprops {
             values.push(("sprop-parameter-sets", &sprops));
             return Ok(Caps::new_simple("application/x-rtp", &values[..]));
         }
@@ -612,11 +648,11 @@ impl StreamBuilder {
     /// Add source elements for an RTSP stream
     fn add_source_rtsp(&mut self) -> Result<(), Error> {
         let src = make_element("rtspsrc", None)?;
-        src.set_property("location", &self.location)?;
-        src.set_property("tcp-timeout", &(2 * self.timeout_us()))?;
+        src.set_property("location", &self.source.location)?;
+        src.set_property("tcp-timeout", &(2 * self.source.timeout_us()))?;
         // Retry TCP after UDP timeout (0 for disabled)
-        src.set_property("timeout", &self.timeout_us())?;
-        src.set_property("latency", &self.latency)?;
+        src.set_property("timeout", &self.source.timeout_us())?;
+        src.set_property("latency", &self.source.latency)?;
         src.set_property("do-retransmission", &false)?;
         src.connect("select-stream", false, |values| {
             let num = values[1].get::<u32>().unwrap();
@@ -630,22 +666,22 @@ impl StreamBuilder {
         let src = make_element("souphttpsrc", None)?;
         src.set_property("location", &self.location_http()?)?;
         // Blocking request timeout (0 for no timeout)
-        src.set_property("timeout", &u32::from(self.timeout))?;
+        src.set_property("timeout", &self.source.timeout_s())?;
         src.set_property("retries", &0)?;
         self.add_element(src)
     }
 
     /// Get HTTP location
     fn location_http(&self) -> Result<&str, Error> {
-        match self.encoding {
-            Encoding::PNG | Encoding::MJPEG => Ok(&self.location),
+        match self.source.encoding {
+            Encoding::PNG | Encoding::MJPEG => Ok(&self.source.location),
             _ => Err(Error::Other("invalid encoding for HTTP")),
         }
     }
 
     /// Add decode elements
     fn add_decode(&mut self) -> Result<(), Error> {
-        match self.encoding {
+        match self.source.encoding {
             Encoding::PNG => {
                 self.add_element(make_element("imagefreeze", None)?)?;
                 self.add_element(make_element("videoconvert", None)?)?;

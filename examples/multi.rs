@@ -10,11 +10,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let location = args.next();
     let overlay_text = args.next();
     let stream = StreamBuilder::new(0)
-        .with_location(&location.expect("Need location"))
-        .with_encoding(Encoding::H264)
-        .with_latency(0)
+        .with_source(Source::default()
+            .with_location(&location.expect("Need location"))
+            .with_encoding(Encoding::H264)
+            .with_latency(0))
         .with_overlay_text(overlay_text.as_ref().map(String::as_ref))
-        .with_sink(Sink::RTP("225.69.69.69".to_string(), 5000, Encoding::H264,
+        .with_sink(Sink::RTP("226.69.69.69".to_string(), 5000, Encoding::H264,
             false))
         .build()?;
     stream.start();
