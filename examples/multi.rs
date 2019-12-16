@@ -6,13 +6,14 @@ use std::error::Error;
 struct Control { }
 
 impl StreamControl for Control {
-    /// Stream started
-    fn started(&self) {
-        info!("stream started");
+    /// Stream playing
+    fn playing(&self) {
+        info!("stream playing");
     }
     /// Stream stopped
-    fn stopped(&self) {
+    fn stopped(&self) -> bool {
         info!("stream stopped");
+        true
     }
 }
 

@@ -111,12 +111,12 @@ pub enum Sink {
     XVIMAGE(AspectRatio, Option<MatrixCrop>),
 }
 
-/// Stream control receives feedback on start/stop
+/// Stream control receives feedback on play/stop
 pub trait StreamControl: Send {
-    /// Stream started
-    fn started(&self);
+    /// Stream playing
+    fn playing(&self);
     /// Stream stopped
-    fn stopped(&self);
+    fn stopped(&self) -> bool;
 }
 
 /// Builder for video streams
@@ -132,6 +132,8 @@ pub struct StreamBuilder {
     overlay_text: Option<String>,
     /// Stream control
     control: Option<Box<dyn StreamControl>>,
+    /// Video overlay handle
+    handle: Option<usize>,
     /// Pipeline for stream
     pipeline: WeakRef<Pipeline>,
     /// Head element of pipeline
@@ -452,6 +454,12 @@ impl StreamBuilder {
         self
     }
 
+    /// Use the specified video overlay window handle
+    pub fn with_handle(mut self, handle: Option<usize>) -> Self {
+        self.handle = handle;
+        self
+    }
+
     /// Build the stream
     pub fn build(mut self) -> Result<Stream, Error> {
         let name = format!("m{}", self.idx);
@@ -459,7 +467,7 @@ impl StreamBuilder {
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
         let bus = pipeline.get_bus().unwrap();
-        bus.add_watch(move |b, m| self.bus_message(b, m));
+        bus.add_watch(move |_bus, m| self.handle_message(m));
         pipeline.set_state(State::Playing).unwrap();
         Ok(Stream {
             pipeline,
@@ -734,6 +742,16 @@ impl StreamBuilder {
                 sink.set_property("port", port)?;
                 sink.set_property("ttl-mc", &15)?;
             }
+            Sink::VAAPI(_, _) | Sink::XVIMAGE(_, _) => {
+                if let Some(handle) = self.handle {
+                    match sink.clone().dynamic_cast::<VideoOverlay>() {
+                        Ok(overlay) => unsafe {
+                            overlay.set_window_handle(handle);
+                        }
+                        Err(_) => error!("invalid video overlay"),
+                    }
+                }
+            }
             _ => (),
         }
         Ok(sink)
@@ -795,13 +813,13 @@ impl StreamBuilder {
         Ok(())
     }
 
-    /// Handle bus messages
-    fn bus_message(&self, _bus: &Bus, msg: &Message) -> glib::Continue {
+    /// Handle a bus message
+    fn handle_message(&self, msg: &Message) -> glib::Continue {
         match msg.view() {
             MessageView::AsyncDone(_) => {
-                info!("started -- {}", self);
+                info!("playing -- {}", self);
                 if let Some(control) = &self.control {
-                    control.started();
+                    control.playing();
                 }
             }
             MessageView::Eos(_) => {
@@ -839,14 +857,23 @@ impl StreamBuilder {
         glib::Continue(true)
     }
 
+    /// Play the stream
+    fn play(&self) {
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.set_state(State::Playing).unwrap();
+        }
+    }
+
     /// Stop the stream
     fn stop(&self) {
-        info!("stopped -- {}", self);
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.set_state(State::Null).unwrap();
+            info!("stopped -- {}", self);
         }
         if let Some(control) = &self.control {
-            control.stopped();
+            if control.stopped() {
+                self.play();
+            }
         }
     }
 
@@ -964,19 +991,6 @@ impl Drop for Stream {
 }
 
 impl Stream {
-
-    /// Set video overlay window handle
-    pub fn set_handle(&self, handle: usize) {
-        match self.pipeline.get_by_name("sink") {
-            Some(sink) => {
-                match sink.dynamic_cast::<VideoOverlay>() {
-                    Ok(overlay) => unsafe { overlay.set_window_handle(handle) },
-                    Err(_) => error!("invalid video overlay"),
-                }
-            }
-            None => error!("no sink element for video overlay"),
-        }
-    }
 
     /// Log packet statistics
     pub fn log_stats(&mut self, cam_id: &str) -> bool {
