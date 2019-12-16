@@ -111,6 +111,14 @@ pub enum Sink {
     XVIMAGE(AspectRatio, Option<MatrixCrop>),
 }
 
+/// Stream control receives feedback on start/stop
+pub trait StreamControl: Send {
+    /// Stream started
+    fn started(&self);
+    /// Stream stopped
+    fn stopped(&self);
+}
+
 /// Builder for video streams
 #[derive(Default)]
 pub struct StreamBuilder {
@@ -128,14 +136,6 @@ pub struct StreamBuilder {
     pipeline: WeakRef<Pipeline>,
     /// Head element of pipeline
     head: Option<Element>,
-}
-
-/// Stream control receives feedback on start/stop
-pub trait StreamControl: Send {
-    /// Stream started
-    fn started(&self);
-    /// Stream stopped
-    fn stopped(&self);
 }
 
 /// Video stream
@@ -459,16 +459,16 @@ impl StreamBuilder {
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
         let bus = pipeline.get_bus().unwrap();
-        let stream = Stream {
+        bus.add_watch(move |b, m| self.bus_message(b, m));
+        pipeline.set_state(State::Playing).unwrap();
+        Ok(Stream {
             pipeline,
-            bus: bus.clone(),
+            bus,
             last_pts: ClockTime::none(),
             pushed: 0,
             lost: 0,
             late: 0,
-        };
-        bus.add_watch(move |b, m| self.bus_message(b, m));
-        Ok(stream)
+        })
     }
 
     /// Check if pipeline should have a text overlay
@@ -504,6 +504,7 @@ impl StreamBuilder {
             self.add_queue()?;
         }
         self.add_source()?;
+        self.head = None;
         Ok(())
     }
 
@@ -808,15 +809,13 @@ impl StreamBuilder {
                 self.stop();
             }
             MessageView::StateChanged(chg) => {
-                if self.has_text() || self.sink.crop().is_some() {
-                    match (chg.get_current(), &chg.get_src()) {
-                        (State::Playing, Some(src)) => {
-                            if src.is::<Pipeline>() {
-                                self.configure_playing();
-                            }
+                match (chg.get_current(), &chg.get_src()) {
+                    (State::Playing, Some(src)) => {
+                        if src.is::<Pipeline>() {
+                            self.configure_playing();
                         }
-                        _ => (),
                     }
+                    _ => (),
                 }
             }
             MessageView::Error(err) => {
@@ -1027,11 +1026,6 @@ impl Stream {
             Err(_) => warn!("failed to get jitter stats"),
         }
         false
-    }
-
-    /// Start the stream
-    pub fn start(&self) {
-        self.pipeline.set_state(State::Playing).unwrap();
     }
 
     /// Stop the stream
