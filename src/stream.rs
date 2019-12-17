@@ -1073,20 +1073,25 @@ impl Drop for Stream {
 
 impl Stream {
 
-    /// Log packet statistics
-    pub fn log_stats(&mut self, cam_id: &str) -> bool {
+    /// Get packet statistics
+    pub fn packet_stats(&mut self) -> Option<(u64, u64, u64)> {
         let pushed = self.pushed;
         let lost = self.lost;
         let late = self.late;
         let update = self.update_stats();
-        if update {
-            info!("stats {}: {} pushed, {} lost, {} late pkts", cam_id,
+        if update &&
+           self.pushed >= pushed &&
+           self.lost >= lost &&
+           self.late >= late
+        {
+            Some((
                  self.pushed - pushed,
                  self.lost - lost,
                  self.late - late,
-            );
+            ))
+        } else {
+            None
         }
-        update
     }
 
     /// Update packet statistics
