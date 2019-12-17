@@ -30,10 +30,10 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 const DEFAULT_LATENCY_MS: u32 = 100;
 
 /// Font size (pt), using default height
-const FONT_SZ: u32 = 22;
+const FONT_SZ: u32 = 12;
 
 /// Default height (px)
-const DEFAULT_HEIGHT: u32 = 720;
+const DEFAULT_HEIGHT: u32 = 240;
 
 /// Video encoding
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -772,6 +772,7 @@ impl StreamBuilder {
     /// Create a text overlay element
     fn create_text(&self) -> Result<Element, Error> {
         let txt = make_element("textoverlay", Some("txt"))?;
+        txt.set_property("auto-resize", &false)?;
         txt.set_property("text", &self.overlay_text.as_ref().unwrap())?;
         txt.set_property("shaded-background", &false)?;
         txt.set_property("color", &0xFF_FF_FF_E0u32)?; // yellowish white
@@ -931,7 +932,7 @@ impl StreamBuilder {
                 Some(height) => {
                     let sz = FONT_SZ * u32::try_from(height)? / DEFAULT_HEIGHT;
                     let margin = i32::try_from(sz / 2)?;
-                    debug!("font sz: {} -- {}", sz, self);
+                    debug!("font sz: {}, height: {} -- {}", sz, height, self);
                     let font = format!("Overpass, Bold {}", sz);
                     txt.set_property("font-desc", &font)?;
                     txt.set_property("ypad", &margin)?; // from top edge
