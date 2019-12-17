@@ -30,7 +30,7 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 const DEFAULT_LATENCY_MS: u32 = 100;
 
 /// Font size (pt), using default height
-const FONT_SZ: u32 = 12;
+const FONT_SZ: u32 = 14;
 
 /// Default height (px)
 const DEFAULT_HEIGHT: u32 = 240;
