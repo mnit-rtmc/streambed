@@ -146,8 +146,6 @@ pub struct Stream {
     pipeline: Pipeline,
     /// Pipeline message bus
     bus: Bus,
-    /// Most recent presentation time stamp
-    last_pts: ClockTime,
     /// Number of pushed packets
     pushed: u64,
     /// Number of lost packets
@@ -466,13 +464,15 @@ impl StreamBuilder {
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
+        let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
         bus.add_watch(move |_bus, m| self.handle_message(m));
+        let mut check = StreamCheck::new(pipeline.downgrade());
+        glib::source::timeout_add(timeout_ms, move || check.pts_check());
         pipeline.set_state(State::Playing).unwrap();
         Ok(Stream {
             pipeline,
             bus,
-            last_pts: ClockTime::none(),
             pushed: 0,
             lost: 0,
             late: 0,
@@ -983,6 +983,75 @@ fn make_element(factory_name: &'static str, name: Option<&str>)
     }
 }
 
+/// Stream PTS stuck check
+struct StreamCheck {
+    /// Stream pipeline
+    pipeline: WeakRef<Pipeline>,
+    /// Most recent presentation time stamp
+    last_pts: ClockTime,
+}
+
+impl StreamCheck {
+    /// Create a new stream PTS stuck check
+    fn new(pipeline: WeakRef<Pipeline>) -> Self {
+        StreamCheck {
+            pipeline,
+            last_pts: ClockTime::none(),
+        }
+    }
+    /// Check if PTS has stopped updating
+    ///
+    /// Post an EOS message if necessary.
+    fn pts_check(&mut self) -> glib::Continue {
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            if let Some(sink) = pipeline.get_by_name("sink") {
+                match self.check_sink(&sink) {
+                    Ok(true) => {
+                        let msg = Message::new_eos().src(Some(&sink)).build();
+                        let bus = pipeline.get_bus().unwrap();
+                        match bus.post(&msg) {
+                            Ok(_) => return glib::Continue(true),
+                            Err(_) => error!("pts_check bus.post failed"),
+                        }
+                    }
+                    Ok(false) => return glib::Continue(true),
+                    Err(_) => return glib::Continue(false),
+                }
+            }
+        }
+        warn!("pts_check failed");
+        glib::Continue(false)
+    }
+    /// Check sink to make sure that last-sample is updating.
+    fn check_sink(&mut self, sink: &Element) -> Result<bool, Error> {
+        match sink.get_property("last-sample") {
+            Ok(sample) => {
+                match sample.get::<Sample>() {
+                    Some(sample) => {
+                        match sample.get_buffer() {
+                            Some(buffer) => {
+                                let pts = buffer.get_pts();
+                                debug!("PTS: {}", pts);
+                                let stuck = pts == self.last_pts;
+                                if stuck {
+                                    warn!("PTS stuck at {}; posting EOS", pts);
+                                } else {
+                                    self.last_pts = pts;
+                                }
+                                return Ok(stuck);
+                            }
+                            None => error!("sample buffer missing"),
+                        }
+                    }
+                    None => error!("last-sample missing"),
+                }
+            }
+            Err(_) => error!("get last-sample failed"),
+        };
+        Err(Error::Other("check_sink failed"))
+    }
+}
+
 impl Drop for Stream {
     fn drop(&mut self) {
         self.stop();
@@ -1043,44 +1112,7 @@ impl Stream {
     }
 
     /// Stop the stream
-    pub fn stop(&mut self) {
+    pub fn stop(&self) {
         self.pipeline.set_state(State::Null).unwrap();
-    }
-
-    /// Check if stream has stopped updating
-    pub fn check_eos(&mut self) -> Result<(), Error> {
-        if let Some(sink) = self.pipeline.get_by_name("sink") {
-            self.check_sink(sink)?;
-        }
-        Ok(())
-    }
-
-    /// Check sink to make sure that last-sample is updating.
-    ///
-    /// If not, post an EOS message on the bus.
-    fn check_sink(&mut self, sink: Element) -> Result<(), Error> {
-        match sink.get_property("last-sample") {
-            Ok(sample) => {
-                match sample.get::<Sample>() {
-                    Some(sample) => {
-                        match sample.get_buffer() {
-                            Some(buffer) => {
-                                let pts = buffer.get_pts();
-                                if pts == self.last_pts {
-                                    error!("PTS stuck at {}; posting EOS", pts);
-                                    self.bus.post(&Message::new_eos()
-                                        .src(Some(&sink)).build())?;
-                                }
-                                self.last_pts = pts;
-                            }
-                            None => error!("sample buffer missing"),
-                        }
-                    }
-                    None => error!("last-sample missing"),
-                }
-            }
-            Err(_) => warn!("get last-sample failed"),
-        };
-        Ok(())
     }
 }
