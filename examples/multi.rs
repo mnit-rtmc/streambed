@@ -5,7 +5,7 @@ use std::error::Error;
 
 struct Control { }
 
-impl StreamControl for Control {
+impl Feedback for Control {
     /// Stream playing
     fn playing(&self) {
         info!("stream playing");
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_overlay_text(overlay_text.as_ref().map(String::as_ref))
         .with_sink(Sink::RTP("226.69.69.69".to_string(), 5000, Encoding::H264,
             false))
-        .with_control(Some(Box::new(Control {})))
+        .with_feedback(Some(Box::new(Control {})))
         .build()?;
     let mainloop = glib::MainLoop::new(None, false);
     mainloop.run();

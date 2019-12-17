@@ -115,8 +115,8 @@ pub enum Sink {
     XVIMAGE(AspectRatio, Option<MatrixCrop>),
 }
 
-/// Stream control receives feedback on play/stop
-pub trait StreamControl: Send {
+/// Feedback on stream playing/stopped
+pub trait Feedback: Send {
     /// Stream playing
     fn playing(&self);
     /// Stream stopped
@@ -134,8 +134,8 @@ pub struct StreamBuilder {
     sink: Sink,
     /// Overlay text
     overlay_text: Option<String>,
-    /// Stream control
-    control: Option<Box<dyn StreamControl>>,
+    /// Stream feedback
+    feedback: Option<Box<dyn Feedback>>,
     /// Video overlay handle
     handle: Option<usize>,
     /// Pipeline for stream
@@ -454,11 +454,11 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified stream control
-    pub fn with_control(mut self, control: Option<Box<dyn StreamControl>>)
+    /// Use the specified stream feedback
+    pub fn with_feedback(mut self, feedback: Option<Box<dyn Feedback>>)
         -> Self
     {
-        self.control = control;
+        self.feedback = feedback;
         self
     }
 
@@ -830,8 +830,8 @@ impl StreamBuilder {
         match msg.view() {
             MessageView::AsyncDone(_) => {
                 info!("playing -- {}", self);
-                if let Some(control) = &self.control {
-                    control.playing();
+                if let Some(feedback) = &self.feedback {
+                    feedback.playing();
                 }
             }
             MessageView::Eos(_) => {
@@ -882,8 +882,8 @@ impl StreamBuilder {
             pipeline.set_state(State::Null).unwrap();
             info!("stopped -- {}", self);
         }
-        if let Some(control) = &self.control {
-            if control.stopped() {
+        if let Some(feedback) = &self.feedback {
+            if feedback.stopped() {
                 self.play();
             }
         }
