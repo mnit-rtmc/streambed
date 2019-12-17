@@ -617,7 +617,7 @@ impl StreamBuilder {
         } else if self.source.is_http() {
             self.add_source_http()
         } else {
-            Err(Error::Other("invalid location"))
+            self.add_source_test()
         }
     }
 
@@ -686,6 +686,14 @@ impl StreamBuilder {
             Encoding::PNG | Encoding::MJPEG => Ok(&self.source.location),
             _ => Err(Error::Other("invalid encoding for HTTP")),
         }
+    }
+
+    /// Add source element for a test stream
+    fn add_source_test(&mut self) -> Result<(), Error> {
+        let src = make_element("videotestsrc", None)?;
+        src.set_property_from_str("pattern", "smpte75");
+        src.set_property("is-live", &true)?;
+        self.add_element(src)
     }
 
     /// Add decode elements
