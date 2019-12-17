@@ -52,7 +52,11 @@ pub enum Encoding {
     H264,
     /// H.265
     H265,
-    /// AV1
+    /// VP8 video
+    VP8,
+    /// VP9 video
+    VP9,
+    /// AV1 video
     AV1,
 }
 
@@ -170,22 +174,28 @@ impl Encoding {
     /// Get RTP depayload factory name
     fn rtp_depay(&self) -> Result<&'static str, Error> {
         match self {
+            Encoding::RAW => Ok("rtpvrawdepay"),
             Encoding::MJPEG => Ok("rtpjpegdepay"),
             Encoding::MPEG2 => Ok("rtpmp2tdepay"),
             Encoding::MPEG4 => Ok("rtpmp4vdepay"),
             Encoding::H264 => Ok("rtph264depay"),
             Encoding::H265 => Ok("rtph265depay"),
+            Encoding::VP8 => Ok("rtpvp8depay"),
+            Encoding::VP9 => Ok("rtpvp9depay"),
             _ => Err(Error::Other("invalid encoding for RTP")),
         }
     }
     /// Get RTP payload factory name
     fn rtp_pay(&self) -> Result<&'static str, Error> {
         match self {
+            Encoding::RAW => Ok("rtpvrawpay"),
             Encoding::MJPEG => Ok("rtpjpegpay"),
             Encoding::MPEG2 => Ok("rtpmp2tpay"),
             Encoding::MPEG4 => Ok("rtpmp4vpay"),
             Encoding::H264 => Ok("rtph264pay"),
             Encoding::H265 => Ok("rtph265pay"),
+            Encoding::VP8 => Ok("rtpvp8pay"),
+            Encoding::VP9 => Ok("rtpvp9pay"),
             _ => Err(Error::Other("invalid encoding for RTP")),
         }
     }
@@ -591,6 +601,9 @@ impl StreamBuilder {
                 enc.set_property_from_str("speed-preset", &"superfast");
                 self.add_element(enc)
             },
+            Encoding::VP8 => self.add_element(make_element("vp8enc", None)?),
+            Encoding::VP9 => self.add_element(make_element("vp9enc", None)?),
+            Encoding::AV1 => self.add_element(make_element("av1enc", None)?),
             _ => Err(Error::Other("invalid encoding")),
         }
     }
@@ -699,6 +712,9 @@ impl StreamBuilder {
             Encoding::H265 => {
                 self.add_element(make_element("libde265dec", None)?)
             }
+            Encoding::VP8 => self.add_element(make_element("vp8dec", None)?),
+            Encoding::VP9 => self.add_element(make_element("vp9dec", None)?),
+            Encoding::AV1 => self.add_element(make_element("av1dec", None)?),
             _ => Err(Error::Other("invalid encoding")),
         }
     }
