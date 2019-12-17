@@ -561,7 +561,7 @@ impl StreamBuilder {
 
     /// Add RTP payload element
     fn add_rtp_pay(&mut self) -> Result<(), Error> {
-        let pay = make_element(self.source.encoding.rtp_pay()?, None)?;
+        let pay = make_element(self.sink.encoding().rtp_pay()?, None)?;
         if let Sink::RTP(_, _, _, true) = self.sink {
             match self.sink.encoding() {
                 Encoding::MPEG4 => {
