@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let location = args.next();
     let overlay_text = args.next();
     let _stream = StreamBuilder::new(0)
+        .with_acceleration(Acceleration::VAAPI)
         .with_source(Source::default()
             .with_location(&location.expect("Need location"))
             .with_encoding(Encoding::H264)

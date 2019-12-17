@@ -109,10 +109,8 @@ pub enum Sink {
     FAKE,
     /// RTP over UDP (addr, port, encoding, insert_config)
     RTP(String, i32, Encoding, bool),
-    /// Video Acceleration API
-    VAAPI(AspectRatio, Option<MatrixCrop>),
-    /// X-Video Image
-    XVIMAGE(AspectRatio, Option<MatrixCrop>),
+    /// Window sink
+    WINDOW(AspectRatio, Option<MatrixCrop>),
 }
 
 /// Feedback on stream playing/stopped
@@ -121,6 +119,15 @@ pub trait Feedback: Send {
     fn playing(&self);
     /// Stream stopped
     fn stopped(&self) -> bool;
+}
+
+/// Hardware video acceleration
+#[derive(Clone, Copy)]
+pub enum Acceleration {
+    /// No video acceleration
+    NONE,
+    /// Video Acceleration API
+    VAAPI,
 }
 
 /// Builder for video streams
@@ -132,6 +139,8 @@ pub struct StreamBuilder {
     source: Source,
     /// Video sink config
     sink: Sink,
+    /// Hardware acceleration
+    acceleration: Acceleration,
     /// Overlay text
     overlay_text: Option<String>,
     /// Stream feedback
@@ -161,6 +170,12 @@ pub struct Stream {
 impl Default for AspectRatio {
     fn default() -> Self {
         AspectRatio::PRESERVE
+    }
+}
+
+impl Default for Acceleration {
+    fn default() -> Self {
+        Acceleration::NONE
     }
 }
 
@@ -387,27 +402,25 @@ impl Sink {
         }
     }
     /// Get the gstreamer factory name
-    fn factory_name(&self) -> &'static str {
-        match self {
-            Sink::FAKE => "fakesink",
-            Sink::RTP(_, _, _, _) => "udpsink",
-            Sink::VAAPI(_, _) => "vaapisink",
-            Sink::XVIMAGE(_, _) => "xvimagesink",
+    fn factory_name(&self, acceleration: Acceleration) -> &'static str {
+        match (self, acceleration) {
+            (Sink::FAKE, _) => "fakesink",
+            (Sink::RTP(_, _, _, _), _) => "udpsink",
+            (Sink::WINDOW(_, _), Acceleration::NONE) => "gtksink",
+            (Sink::WINDOW(_, _), Acceleration::VAAPI) => "vaapisink",
         }
     }
     /// Get the aspect ratio setting
     fn aspect_ratio(&self) -> Option<AspectRatio> {
         match self {
-            Sink::VAAPI(a, _) => Some(*a),
-            Sink::XVIMAGE(a, _) => Some(*a),
+            Sink::WINDOW(a, _) => Some(*a),
             _ => None,
         }
     }
     /// Get the matrix crop setting
     fn crop(&self) -> &Option<MatrixCrop> {
         match self {
-            Sink::VAAPI(_, c) => &c,
-            Sink::XVIMAGE(_, c) => &c,
+            Sink::WINDOW(_, c) => &c,
             _ => &None,
         }
     }
@@ -445,6 +458,12 @@ impl StreamBuilder {
     /// Use the specified sink
     pub fn with_sink(mut self, sink: Sink) -> Self {
         self.sink = sink;
+        self
+    }
+
+    /// Use the specified video acceleration
+    pub fn with_acceleration(mut self, acceleration: Acceleration) -> Self {
+        self.acceleration = acceleration;
         self
     }
 
@@ -585,16 +604,7 @@ impl StreamBuilder {
             Encoding::MPEG4 => {
                 self.add_element(make_element("avenc_mpeg4", None)?)
             }
-            Encoding::H264 => {
-                let enc = make_element("x264enc", None)?;
-                enc.set_property_from_str("tune", &"zerolatency");
-                // With the default "medium" speed-preset, the pipeline can't
-                // run live.  With "superfast", the quality is still very good.
-                // ultrafast (1), superfast (2), veryfast (3), faster (4),
-                // fast (5), medium (6), etc.
-                enc.set_property_from_str("speed-preset", &"superfast");
-                self.add_element(enc)
-            },
+            Encoding::H264 => self.add_element(self.create_h264enc()?),
             Encoding::H265 => {
                 let enc = make_element("x265enc", None)?;
                 enc.set_property_from_str("tune", &"zerolatency");
@@ -605,6 +615,28 @@ impl StreamBuilder {
             Encoding::VP9 => self.add_element(make_element("vp9enc", None)?),
             Encoding::AV1 => self.add_element(make_element("av1enc", None)?),
             _ => Err(Error::Other("invalid encoding")),
+        }
+    }
+
+    /// Create h.264 encode element
+    fn create_h264enc(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => {
+                let enc = make_element("vaapih264enc", None)?;
+                enc.set_property("quality-level", &6u32)?;
+                enc.set_property_from_str("tune", &"low-power");
+                Ok(enc)
+            }
+            _ => {
+                let enc = make_element("x264enc", None)?;
+                enc.set_property_from_str("tune", &"zerolatency");
+                // With the default "medium" speed-preset, the pipeline can't
+                // run live.  With "superfast", the quality is still very good.
+                // ultrafast (1), superfast (2), veryfast (3), faster (4),
+                // fast (5), medium (6), etc.
+                enc.set_property_from_str("speed-preset", &"superfast");
+                Ok(enc)
+            }
         }
     }
 
@@ -738,10 +770,10 @@ impl StreamBuilder {
         self.add_element(que)
     }
 
-    /// Create H264 decode element
+    /// Create h.264 decode element
     fn create_h264dec(&self) -> Result<Element, Error> {
-        match self.sink {
-            Sink::VAAPI(_, _) => make_element("vaapih264dec", None),
+        match self.acceleration {
+            Acceleration::VAAPI => make_element("vaapih264dec", None),
             _ => {
                 let dec = make_element("avdec_h264", None)?;
                 dec.set_property("output-corrupt", &false)?;
@@ -752,7 +784,8 @@ impl StreamBuilder {
 
     /// Create a sink element
     fn create_sink(&self) -> Result<Element, Error> {
-        let sink = make_element(self.sink.factory_name(), Some("sink"))?;
+        let sink = make_element(self.sink.factory_name(self.acceleration),
+            Some("sink"))?;
         if let Some(aspect) = self.sink.aspect_ratio() {
             sink.set_property("force-aspect-ratio", &aspect.as_bool())?;
         }
@@ -762,7 +795,7 @@ impl StreamBuilder {
                 sink.set_property("port", port)?;
                 sink.set_property("ttl-mc", &15)?;
             }
-            Sink::VAAPI(_, _) | Sink::XVIMAGE(_, _) => {
+            Sink::WINDOW(_, _) => {
                 if let Some(handle) = self.handle {
                     match sink.clone().dynamic_cast::<VideoOverlay>() {
                         Ok(overlay) => unsafe {
