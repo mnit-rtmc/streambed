@@ -494,21 +494,24 @@ impl StreamBuilder {
         }
         if self.needs_encode() {
             self.add_encode()?;
+            self.add_queue()?;
         }
         if self.sink.crop().is_some() {
             self.add_element(make_element("videobox", Some("vbox"))?)?;
         }
         if self.has_text() {
             self.add_element(self.create_text()?)?;
+            self.add_queue()?;
         }
         if self.needs_decode() {
             self.add_decode()?;
+            self.add_queue()?;
         }
         if self.needs_rtp_depay() {
             let depay = make_element(self.source.encoding.rtp_depay()?, None)?;
             self.add_element(depay)?;
         }
-        if self.needs_queue() {
+        if self.is_rtp_passthru() {
             self.add_queue()?;
         }
         self.add_source()?;
@@ -544,13 +547,6 @@ impl StreamBuilder {
     /// Check if pipeline needs decoding
     fn needs_decode(&self) -> bool {
         self.source.encoding != Encoding::RAW && self.needs_transcode()
-    }
-
-    /// Check if pipeline needs a queue
-    fn needs_queue(&self) -> bool {
-        self.is_rtp_passthru() ||
-        self.source.encoding == Encoding::MPEG2 ||
-        self.needs_encode()
     }
 
     /// Add RTP payload element
