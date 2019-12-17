@@ -605,12 +605,7 @@ impl StreamBuilder {
                 self.add_element(make_element("avenc_mpeg4", None)?)
             }
             Encoding::H264 => self.add_element(self.create_h264enc()?),
-            Encoding::H265 => {
-                let enc = make_element("x265enc", None)?;
-                enc.set_property_from_str("tune", &"zerolatency");
-                enc.set_property_from_str("speed-preset", &"superfast");
-                self.add_element(enc)
-            },
+            Encoding::H265 => self.add_element(self.create_h265enc()?),
             Encoding::VP8 => self.add_element(make_element("vp8enc", None)?),
             Encoding::VP9 => self.add_element(make_element("vp9enc", None)?),
             Encoding::AV1 => self.add_element(make_element("av1enc", None)?),
@@ -623,6 +618,7 @@ impl StreamBuilder {
         match self.acceleration {
             Acceleration::VAAPI => {
                 let enc = make_element("vaapih264enc", None)?;
+                // Quality-level ranges to 1 (best) to 7 (worst)
                 enc.set_property("quality-level", &6u32)?;
                 enc.set_property_from_str("tune", &"low-power");
                 Ok(enc)
@@ -634,6 +630,25 @@ impl StreamBuilder {
                 // run live.  With "superfast", the quality is still very good.
                 // ultrafast (1), superfast (2), veryfast (3), faster (4),
                 // fast (5), medium (6), etc.
+                enc.set_property_from_str("speed-preset", &"superfast");
+                Ok(enc)
+            }
+        }
+    }
+
+    /// Create h.265 encode element
+    fn create_h265enc(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => {
+                let enc = make_element("vaapih265enc", None)?;
+                // Quality-level ranges to 1 (best) to 7 (worst)
+                enc.set_property("quality-level", &6u32)?;
+                enc.set_property_from_str("tune", &"low-power");
+                Ok(enc)
+            }
+            _ => {
+                let enc = make_element("x265enc", None)?;
+                enc.set_property_from_str("tune", &"zerolatency");
                 enc.set_property_from_str("speed-preset", &"superfast");
                 Ok(enc)
             }
@@ -749,9 +764,7 @@ impl StreamBuilder {
                 self.add_element(dec)
             }
             Encoding::H264 => self.add_element(self.create_h264dec()?),
-            Encoding::H265 => {
-                self.add_element(make_element("libde265dec", None)?)
-            }
+            Encoding::H265 => self.add_element(self.create_h265dec()?),
             Encoding::VP8 => self.add_element(make_element("vp8dec", None)?),
             Encoding::VP9 => self.add_element(make_element("vp9dec", None)?),
             Encoding::AV1 => self.add_element(make_element("av1dec", None)?),
@@ -779,6 +792,14 @@ impl StreamBuilder {
                 dec.set_property("output-corrupt", &false)?;
                 Ok(dec)
             }
+        }
+    }
+
+    /// Create h.265 decode element
+    fn create_h265dec(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => make_element("vaapih265dec", None),
+            _ => make_element("libde265dec", None),
         }
     }
 
