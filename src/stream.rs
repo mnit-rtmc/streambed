@@ -603,6 +603,11 @@ impl StreamBuilder {
     fn add_encode(&mut self) -> Result<(), Error> {
         match self.sink.encoding() {
             Encoding::RAW => Ok(()),
+            Encoding::MJPEG => self.add_element(make_element("jpegenc", None)?),
+            Encoding::MPEG2 => {
+                self.add_element(make_element("mpegtsmux", None)?)?;
+                self.add_element(make_element("mpeg2enc", None)?)
+            }
             Encoding::MPEG4 => self.add_element(self.create_mpeg4enc()?),
             Encoding::H264 => self.add_element(self.create_h264enc()?),
             Encoding::H265 => self.add_element(self.create_h265enc()?),
@@ -773,9 +778,7 @@ impl StreamBuilder {
                 self.add_element(make_element("videoconvert", None)?)?;
                 self.add_element(make_element("pngdec", None)?)
             }
-            Encoding::MJPEG => {
-                self.add_element(make_element("jpegdec", None)?)
-            }
+            Encoding::MJPEG => self.add_element(make_element("jpegdec", None)?),
             Encoding::MPEG2 => {
                 self.add_element(make_element("mpeg2dec", None)?)?;
                 self.add_element(make_element("tsdemux", None)?)
