@@ -29,6 +29,9 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 /// Default buffering latency (ms)
 const DEFAULT_LATENCY_MS: u32 = 100;
 
+/// Number of times to check PTS before giving up
+const PTS_CHECK_TRIES: usize = 5;
+
 /// Font size (pt), using default height
 const FONT_SZ: u32 = 14;
 
@@ -192,15 +195,16 @@ fn set_property(elem: &Element, name: &'static str, value: &dyn ToValue)
     }
 }
 
-/// Link sometimes pad with sink
-fn link_sometimes_pad(src: &Element, src_pad: &Pad, sink: Element) {
+/// Link ghost pad with sink
+fn link_ghost_pad(src: &Element, src_pad: &Pad, sink: Element) {
     match sink.get_static_pad("sink") {
         Some(sink_pad) => {
+            let pn = src_pad.get_name();
             let p0 = src.get_name();
             let p1 = sink.get_name();
             match src_pad.link(&sink_pad) {
-                Ok(_) => debug!("pad linked (sometimes): {} => {}", p0, p1),
-                Err(_) => error!("pad not linked: {}", p0),
+                Ok(_) => debug!("pad {} linked: {} => {}", pn, p0, p1),
+                Err(_) => debug!("pad {} not linked: {} => {}", pn, p0, p1),
             }
         }
         None => error!("no sink pad"),
@@ -970,7 +974,7 @@ impl StreamBuilder {
                 let sink = sink.downgrade(); // weak ref
                 src.connect_pad_added(move |src, src_pad| {
                     match sink.upgrade() {
-                        Some(sink) => link_sometimes_pad(src, src_pad, sink),
+                        Some(sink) => link_ghost_pad(src, src_pad, sink),
                         None => error!("sink gone"),
                     }
                 });
@@ -1140,6 +1144,8 @@ impl StreamBuilder {
 struct StreamCheck {
     /// Stream pipeline
     pipeline: WeakRef<Pipeline>,
+    /// Count of checks
+    count: usize,
     /// Most recent presentation time stamp
     last_pts: ClockTime,
 }
@@ -1149,6 +1155,7 @@ impl StreamCheck {
     fn new(pipeline: WeakRef<Pipeline>) -> Self {
         StreamCheck {
             pipeline,
+            count: 0,
             last_pts: ClockTime::none(),
         }
     }
@@ -1156,27 +1163,36 @@ impl StreamCheck {
     ///
     /// Post an EOS message if necessary.
     fn pts_check(&mut self) -> glib::Continue {
-        if let Some(pipeline) = self.pipeline.upgrade() {
-            if let Some(sink) = pipeline.get_by_name("sink") {
-                match self.check_sink(&sink) {
-                    Ok(true) => {
-                        let msg = Message::new_eos().src(Some(&sink)).build();
-                        let bus = pipeline.get_bus().unwrap();
-                        match bus.post(&msg) {
-                            Ok(_) => return glib::Continue(true),
-                            Err(_) => error!("pts_check bus.post failed"),
+        self.count += 1;
+        match self.pipeline.upgrade() {
+            Some(pipeline) => {
+                match pipeline.get_by_name("sink") {
+                    Some(sink) => {
+                        if self.is_stuck(&sink) {
+                            let msg = Message::new_eos()
+                                .src(Some(&sink))
+                                .build();
+                            let bus = pipeline.get_bus().unwrap();
+                            if let Err(_) = bus.post(&msg) {
+                                error!("pts_check post failed");
+                            }
                         }
+                        glib::Continue(true)
                     }
-                    Ok(false) => return glib::Continue(true),
-                    Err(_) => return glib::Continue(false),
+                    None => {
+                        warn!("pts_check sink gone");
+                        glib::Continue(false)
+                    }
                 }
             }
+            None => {
+                warn!("pts_check pipeline gone");
+                glib::Continue(false)
+            }
         }
-        warn!("pts_check failed");
-        glib::Continue(false)
     }
     /// Check sink to make sure that last-sample is updating.
-    fn check_sink(&mut self, sink: &Element) -> Result<bool, Error> {
+    fn is_stuck(&mut self, sink: &Element) -> bool {
         match sink.get_property("last-sample") {
             Ok(sample) => {
                 match sample.get::<Sample>() {
@@ -1184,24 +1200,24 @@ impl StreamCheck {
                         match sample.get_buffer() {
                             Some(buffer) => {
                                 let pts = buffer.get_pts();
-                                debug!("PTS: {}", pts);
+                                trace!("PTS: {}", pts);
                                 let stuck = pts == self.last_pts;
                                 if stuck {
-                                    warn!("PTS stuck at {}; posting EOS", pts);
+                                    info!("PTS stuck at {}; posting EOS", pts);
                                 } else {
                                     self.last_pts = pts;
                                 }
-                                return Ok(stuck);
+                                return stuck;
                             }
                             None => error!("sample buffer missing"),
                         }
                     }
-                    None => error!("last-sample missing"),
+                    None => debug!("last-sample missing: {}", self.count),
                 }
             }
             Err(_) => error!("get last-sample failed"),
         };
-        Err(Error::Other("check_sink failed"))
+        self.count > PTS_CHECK_TRIES
     }
 }
 
