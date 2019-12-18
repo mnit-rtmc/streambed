@@ -22,12 +22,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     gstreamer::init().unwrap();
     let mut args = env::args();
     let _prog = args.next();
-    let location = args.next();
+    let location = args.next().expect("Need location");
     let overlay_text = args.next();
     let _stream = StreamBuilder::new(0)
         .with_acceleration(Acceleration::VAAPI)
         .with_source(Source::default()
-            .with_location(&location.expect("Need location"))
+            .with_location(&location)
             .with_encoding(Encoding::H264)
             .with_latency(0))
         .with_overlay_text(overlay_text.as_ref().map(String::as_ref))
