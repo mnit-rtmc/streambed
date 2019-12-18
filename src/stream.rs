@@ -601,16 +601,19 @@ impl StreamBuilder {
     fn add_encode(&mut self) -> Result<(), Error> {
         match self.sink.encoding() {
             Encoding::RAW => Ok(()),
-            Encoding::MPEG4 => {
-                self.add_element(make_element("avenc_mpeg4", None)?)
-            }
+            Encoding::MPEG4 => self.add_element(self.create_mpeg4enc()?),
             Encoding::H264 => self.add_element(self.create_h264enc()?),
             Encoding::H265 => self.add_element(self.create_h265enc()?),
-            Encoding::VP8 => self.add_element(make_element("vp8enc", None)?),
-            Encoding::VP9 => self.add_element(make_element("vp9enc", None)?),
+            Encoding::VP8 => self.add_element(self.create_vp8enc()?),
+            Encoding::VP9 => self.add_element(self.create_vp9enc()?),
             Encoding::AV1 => self.add_element(make_element("av1enc", None)?),
             _ => Err(Error::Other("invalid encoding")),
         }
+    }
+
+    /// Create MPEG-4 encode element
+    fn create_mpeg4enc(&self) -> Result<Element, Error> {
+        make_element("avenc_mpeg4", None)
     }
 
     /// Create h.264 encode element
@@ -652,6 +655,22 @@ impl StreamBuilder {
                 enc.set_property_from_str("speed-preset", &"superfast");
                 Ok(enc)
             }
+        }
+    }
+
+    /// Create VP8 encode element
+    fn create_vp8enc(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => make_element("vaapivp8enc", None),
+            _ => make_element("vp8enc", None),
+        }
+    }
+
+    /// Create VP9 encode element
+    fn create_vp9enc(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => make_element("vaapivp9enc", None),
+            _ => make_element("vp9enc", None),
         }
     }
 
@@ -758,15 +777,11 @@ impl StreamBuilder {
                 self.add_element(make_element("mpeg2dec", None)?)?;
                 self.add_element(make_element("tsdemux", None)?)
             }
-            Encoding::MPEG4 => {
-                let dec = make_element("avdec_mpeg4", None)?;
-                dec.set_property("output-corrupt", &false)?;
-                self.add_element(dec)
-            }
+            Encoding::MPEG4 => self.add_element(self.create_mpeg4dec()?),
             Encoding::H264 => self.add_element(self.create_h264dec()?),
             Encoding::H265 => self.add_element(self.create_h265dec()?),
-            Encoding::VP8 => self.add_element(make_element("vp8dec", None)?),
-            Encoding::VP9 => self.add_element(make_element("vp9dec", None)?),
+            Encoding::VP8 => self.add_element(self.create_vp8dec()?),
+            Encoding::VP9 => self.add_element(self.create_vp9dec()?),
             Encoding::AV1 => self.add_element(make_element("av1dec", None)?),
             _ => Err(Error::Other("invalid encoding")),
         }
@@ -781,6 +796,13 @@ impl StreamBuilder {
             que.set_property_from_str("leaky", &"downstream");
         }
         self.add_element(que)
+    }
+
+    /// Create MPEG-4 decode element
+    fn create_mpeg4dec(&self) -> Result<Element, Error> {
+        let dec = make_element("avdec_mpeg4", None)?;
+        dec.set_property("output-corrupt", &false)?;
+        Ok(dec)
     }
 
     /// Create h.264 decode element
@@ -800,6 +822,22 @@ impl StreamBuilder {
         match self.acceleration {
             Acceleration::VAAPI => make_element("vaapih265dec", None),
             _ => make_element("libde265dec", None),
+        }
+    }
+
+    /// Create VP8 decode element
+    fn create_vp8dec(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => make_element("vaapivp8dec", None),
+            _ => make_element("vp8dec", None),
+        }
+    }
+
+    /// Create VP9 decode element
+    fn create_vp9dec(&self) -> Result<Element, Error> {
+        match self.acceleration {
+            Acceleration::VAAPI => make_element("vaapivp9dec", None),
+            _ => make_element("vp9dec", None),
         }
     }
 
