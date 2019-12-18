@@ -6,8 +6,8 @@ use crate::error::Error;
 use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
 use gstreamer::{
     Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual, ElementFactory,
-    GstBinExt, GstObjectExt, GObjectExtManualGst, Message, MessageView, PadExt,
-    PadExtManual, Pipeline, Sample, State, Structure,
+    GstBinExt, GstObjectExt, GObjectExtManualGst, Message, MessageView, Pad,
+    PadExt, PadExtManual, Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{debug, error, info, trace, warn};
@@ -192,6 +192,21 @@ fn set_property(elem: &Element, name: &'static str, value: &dyn ToValue)
     }
 }
 
+/// Link sometimes pad with sink
+fn link_sometimes_pad(src: &Element, src_pad: &Pad, sink: Element) {
+    match sink.get_static_pad("sink") {
+        Some(sink_pad) => {
+            let p0 = src.get_name();
+            let p1 = sink.get_name();
+            match src_pad.link(&sink_pad) {
+                Ok(_) => debug!("pad linked (sometimes): {} => {}", p0, p1),
+                Err(_) => error!("pad not linked: {}", p0),
+            }
+        }
+        None => error!("no sink pad"),
+    }
+}
+
 impl Default for AspectRatio {
     fn default() -> Self {
         AspectRatio::PRESERVE
@@ -313,6 +328,11 @@ impl Source {
     /// Check if source is RTSP
     fn is_rtsp(&self) -> bool {
         self.location.starts_with("rtsp://")
+    }
+
+    /// Check if source is RTP or RTSP
+    fn is_rtp_or_rtsp(&self) -> bool {
+        self.is_rtp() || self.is_rtsp()
     }
 
     /// Check if source is HTTP
@@ -580,12 +600,14 @@ impl StreamBuilder {
 
     /// Check if pipeline needs RTP depayloader
     fn needs_rtp_depay(&self) -> bool {
-        self.source.is_rtp() && !self.is_rtp_passthru()
+        self.source.is_rtp_or_rtsp() && !self.is_rtp_passthru()
     }
 
     /// Check if RTP can pass unchanged from source to sink
     fn is_rtp_passthru(&self) -> bool {
-        self.source.is_rtp() && self.sink.is_rtp() && !self.needs_transcode()
+        self.source.is_rtp_or_rtsp() &&
+        self.sink.is_rtp() &&
+        !self.needs_transcode()
     }
 
     /// Check if pipeline needs transcoding
@@ -937,30 +959,23 @@ impl StreamBuilder {
 
     /// Link a source element with a sink
     fn link_src_sink(&self, src: &Element, sink: Element) -> Result<(), Error> {
-        debug!("link_src_sink: {} => {} -- {}", src.get_name(), sink.get_name(),
-            self);
-        if let Err(_) = src.link(&sink) {
-            return Err(Error::LinkElement());
-        }
-        let sink = sink.downgrade(); // weak ref
-        src.connect_pad_added(move |src, src_pad| {
-            match sink.upgrade() {
-                Some(sink) => {
-                    match sink.get_static_pad("sink") {
-                        Some(sink_pad) => {
-                            let p0 = src.get_name();
-                            let p1 = sink.get_name();
-                            match src_pad.link(&sink_pad) {
-                                Ok(_) => debug!("pad linked: {} => {}", p0, p1),
-                                Err(_) => error!("pad link: {}", p0),
-                            }
-                        }
-                        None => error!("no sink pad"),
-                    }
-                }
-                None => error!("no sink to link"),
+        debug!("{} => {} -- {}", src.get_name(), sink.get_name(), self);
+        match src.link(&sink) {
+            Ok(()) => {
+                let p0 = src.get_name();
+                let p1 = sink.get_name();
+                debug!("pad linked (static): {} => {}", p0, p1);
             }
-        });
+            Err(_) => {
+                let sink = sink.downgrade(); // weak ref
+                src.connect_pad_added(move |src, src_pad| {
+                    match sink.upgrade() {
+                        Some(sink) => link_sometimes_pad(src, src_pad, sink),
+                        None => error!("sink gone"),
+                    }
+                });
+            }
+        }
         Ok(())
     }
 
