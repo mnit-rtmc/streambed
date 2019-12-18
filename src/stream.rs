@@ -128,6 +128,8 @@ pub enum Acceleration {
     NONE,
     /// Video Acceleration API
     VAAPI,
+    /// OpenMAX
+    OMX,
 }
 
 /// Builder for video streams
@@ -406,8 +408,8 @@ impl Sink {
         match (self, acceleration) {
             (Sink::FAKE, _) => "fakesink",
             (Sink::RTP(_, _, _, _), _) => "udpsink",
-            (Sink::WINDOW(_, _), Acceleration::NONE) => "gtksink",
             (Sink::WINDOW(_, _), Acceleration::VAAPI) => "vaapisink",
+            (Sink::WINDOW(_, _), _) => "gtksink",
         }
     }
     /// Get the aspect ratio setting
@@ -626,6 +628,7 @@ impl StreamBuilder {
                 enc.set_property_from_str("tune", &"low-power");
                 Ok(enc)
             }
+            Acceleration::OMX => make_element("omxh264enc", None),
             _ => {
                 let enc = make_element("x264enc", None)?;
                 enc.set_property_from_str("tune", &"zerolatency");
@@ -809,6 +812,7 @@ impl StreamBuilder {
     fn create_h264dec(&self) -> Result<Element, Error> {
         match self.acceleration {
             Acceleration::VAAPI => make_element("vaapih264dec", None),
+            Acceleration::OMX => make_element("omxh264dec", None),
             _ => {
                 let dec = make_element("avdec_h264", None)?;
                 dec.set_property("output-corrupt", &false)?;
@@ -829,6 +833,7 @@ impl StreamBuilder {
     fn create_vp8dec(&self) -> Result<Element, Error> {
         match self.acceleration {
             Acceleration::VAAPI => make_element("vaapivp8dec", None),
+            Acceleration::OMX => make_element("omxvp8dec", None),
             _ => make_element("vp8dec", None),
         }
     }
