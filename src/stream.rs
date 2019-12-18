@@ -169,6 +169,29 @@ pub struct Stream {
     late: u64,
 }
 
+/// Make a pipeline element
+fn make_element(factory_name: &'static str, name: Option<&str>)
+    -> Result<Element, Error>
+{
+    match ElementFactory::make(factory_name, name) {
+        Some(elem) => Ok(elem),
+        None => {
+            error!("make_element: {}", factory_name);
+            Err(Error::MissingElement(factory_name))
+        }
+    }
+}
+
+/// Set a property of an element
+fn set_property(elem: &Element, name: &'static str, value: &dyn ToValue)
+    -> Result<(), Error>
+{
+    match elem.set_property(name, value) {
+        Ok(()) => Ok(()),
+        Err(_) => Err(Error::InvalidProperty(name)),
+    }
+}
+
 impl Default for AspectRatio {
     fn default() -> Self {
         AspectRatio::PRESERVE
@@ -587,11 +610,11 @@ impl StreamBuilder {
             match self.sink.encoding() {
                 Encoding::MPEG4 => {
                     // send configuration headers once per second
-                    pay.set_property("config-interval", &1u32)?;
+                    set_property(&pay, "config-interval", &1u32)?;
                 }
                 Encoding::H264 | Encoding::H265 => {
                     // send sprop parameter sets every IDR frame (-1)
-                    pay.set_property("config-interval", &(-1))?;
+                    set_property(&pay, "config-interval", &(-1))?;
                 }
                 _ => (),
             }
@@ -629,7 +652,7 @@ impl StreamBuilder {
             Acceleration::VAAPI => {
                 let enc = make_element("vaapih264enc", None)?;
                 // Quality-level ranges to 1 (best) to 7 (worst)
-                enc.set_property("quality-level", &6u32)?;
+                set_property(&enc, "quality-level", &6u32)?;
                 enc.set_property_from_str("tune", &"low-power");
                 Ok(enc)
             }
@@ -653,7 +676,7 @@ impl StreamBuilder {
             Acceleration::VAAPI => {
                 let enc = make_element("vaapih265enc", None)?;
                 // Quality-level ranges to 1 (best) to 7 (worst)
-                enc.set_property("quality-level", &6u32)?;
+                set_property(&enc, "quality-level", &6u32)?;
                 enc.set_property_from_str("tune", &"low-power");
                 Ok(enc)
             }
@@ -699,18 +722,18 @@ impl StreamBuilder {
     fn add_source_rtp(&mut self) -> Result<(), Error> {
         if !self.source.is_rtsp() {
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
-            jtr.set_property("latency", &self.source.latency)?;
-            jtr.set_property("max-dropout-time", &self.source.timeout_ms())?;
+            set_property(&jtr, "latency", &self.source.latency)?;
+            set_property(&jtr, "max-dropout-time", &self.source.timeout_ms())?;
             self.add_element(jtr)?;
             let fltr = make_element("capsfilter", None)?;
             let caps = self.create_rtp_caps()?;
-            fltr.set_property("caps", &caps)?;
+            set_property(&fltr, "caps", &caps)?;
             self.add_element(fltr)?;
         }
         let src = make_element("udpsrc", None)?;
-        src.set_property("uri", &self.source.location)?;
+        set_property(&src, "uri", &self.source.location)?;
         // Post GstUDPSrcTimeout messages after timeout (0 for disabled)
-        src.set_property("timeout", &self.source.timeout_ns())?;
+        set_property(&src, "timeout", &self.source.timeout_ns())?;
         self.add_element(src)
     }
 
@@ -731,26 +754,29 @@ impl StreamBuilder {
     /// Add source elements for an RTSP stream
     fn add_source_rtsp(&mut self) -> Result<(), Error> {
         let src = make_element("rtspsrc", None)?;
-        src.set_property("location", &self.source.location)?;
-        src.set_property("tcp-timeout", &(2 * self.source.timeout_us()))?;
+        set_property(&src, "location", &self.source.location)?;
+        set_property(&src, "tcp-timeout", &(2 * self.source.timeout_us()))?;
         // Retry TCP after UDP timeout (0 for disabled)
-        src.set_property("timeout", &self.source.timeout_us())?;
-        src.set_property("latency", &self.source.latency)?;
-        src.set_property("do-retransmission", &false)?;
-        src.connect("select-stream", false, |values| {
+        set_property(&src, "timeout", &self.source.timeout_us())?;
+        set_property(&src, "latency", &self.source.latency)?;
+        set_property(&src, "do-retransmission", &false)?;
+        match src.connect("select-stream", false, |values| {
             let num = values[1].get::<u32>().unwrap();
             Some((num == STREAM_NUM_VIDEO).to_value())
-        })?;
-        self.add_element(src)
+        })
+        {
+            Ok(_) => self.add_element(src),
+            Err(_) => Err(Error::ConnectSignal()),
+        }
     }
 
     /// Add source elements for an HTTP stream
     fn add_source_http(&mut self) -> Result<(), Error> {
         let src = make_element("souphttpsrc", None)?;
-        src.set_property("location", &self.location_http()?)?;
+        set_property(&src, "location", &self.location_http()?)?;
         // Blocking request timeout (0 for no timeout)
-        src.set_property("timeout", &self.source.timeout_s())?;
-        src.set_property("retries", &0)?;
+        set_property(&src, "timeout", &self.source.timeout_s())?;
+        set_property(&src, "retries", &0)?;
         self.add_element(src)
     }
 
@@ -766,7 +792,7 @@ impl StreamBuilder {
     fn add_source_test(&mut self) -> Result<(), Error> {
         let src = make_element("videotestsrc", None)?;
         src.set_property_from_str("pattern", "smpte75");
-        src.set_property("is-live", &true)?;
+        set_property(&src, "is-live", &true)?;
         self.add_element(src)
     }
 
@@ -796,7 +822,7 @@ impl StreamBuilder {
     /// Add queue element
     fn add_queue(&mut self) -> Result<(), Error> {
         let que = make_element("queue", None)?;
-        que.set_property("max-size-time", &SEC_NS)?;
+        set_property(&que, "max-size-time", &SEC_NS)?;
         if self.needs_encode() {
             // leak (drop) packets -- when encoding cannot keep up
             que.set_property_from_str("leaky", &"downstream");
@@ -807,7 +833,7 @@ impl StreamBuilder {
     /// Create MPEG-4 decode element
     fn create_mpeg4dec(&self) -> Result<Element, Error> {
         let dec = make_element("avdec_mpeg4", None)?;
-        dec.set_property("output-corrupt", &false)?;
+        set_property(&dec, "output-corrupt", &false)?;
         Ok(dec)
     }
 
@@ -818,7 +844,7 @@ impl StreamBuilder {
             Acceleration::OMX => make_element("omxh264dec", None),
             _ => {
                 let dec = make_element("avdec_h264", None)?;
-                dec.set_property("output-corrupt", &false)?;
+                set_property(&dec, "output-corrupt", &false)?;
                 Ok(dec)
             }
         }
@@ -854,13 +880,13 @@ impl StreamBuilder {
         let sink = make_element(self.sink.factory_name(self.acceleration),
             Some("sink"))?;
         if let Some(aspect) = self.sink.aspect_ratio() {
-            sink.set_property("force-aspect-ratio", &aspect.as_bool())?;
+            set_property(&sink, "force-aspect-ratio", &aspect.as_bool())?;
         }
         match &self.sink {
             Sink::RTP(addr, port, _, _) => {
-                sink.set_property("host", addr)?;
-                sink.set_property("port", port)?;
-                sink.set_property("ttl-mc", &15)?;
+                set_property(&sink, "host", addr)?;
+                set_property(&sink, "port", port)?;
+                set_property(&sink, "ttl-mc", &15)?;
             }
             Sink::WINDOW(_, _) => {
                 if let Some(handle) = self.handle {
@@ -880,10 +906,10 @@ impl StreamBuilder {
     /// Create a text overlay element
     fn create_text(&self) -> Result<Element, Error> {
         let txt = make_element("textoverlay", Some("txt"))?;
-        txt.set_property("auto-resize", &false)?;
-        txt.set_property("text", &self.overlay_text.as_ref().unwrap())?;
-        txt.set_property("shaded-background", &false)?;
-        txt.set_property("color", &0xFF_FF_FF_E0u32)?; // yellowish white
+        set_property(&txt, "auto-resize", &false)?;
+        set_property(&txt, "text", &self.overlay_text.as_ref().unwrap())?;
+        set_property(&txt, "shaded-background", &false)?;
+        set_property(&txt, "color", &0xFF_FF_FF_E0u32)?; // yellowish white
         txt.set_property_from_str("wrap-mode", &"none");
         txt.set_property_from_str("halignment", &"right");
         txt.set_property_from_str("valignment", &"top");
@@ -895,7 +921,9 @@ impl StreamBuilder {
         trace!("add_element: {} -- {}", elem.get_name(), self);
         match self.pipeline.upgrade() {
             Some(pipeline) => {
-                pipeline.add(&elem)?;
+                if let Err(_) = pipeline.add(&elem) {
+                    return Err(Error::PipelineAdd());
+                }
                 match self.head.take() {
                     Some(head) => self.link_src_sink(&elem, head)?,
                     None => (),
@@ -911,7 +939,9 @@ impl StreamBuilder {
     fn link_src_sink(&self, src: &Element, sink: Element) -> Result<(), Error> {
         debug!("link_src_sink: {} => {} -- {}", src.get_name(), sink.get_name(),
             self);
-        src.link(&sink)?;
+        if let Err(_) = src.link(&sink) {
+            return Err(Error::LinkElement());
+        }
         let sink = sink.downgrade(); // weak ref
         src.connect_pad_added(move |src, src_pad| {
             match sink.upgrade() {
@@ -1042,9 +1072,9 @@ impl StreamBuilder {
                     let margin = i32::try_from(sz / 2)?;
                     debug!("font sz: {}, height: {} -- {}", sz, height, self);
                     let font = format!("Overpass, Bold {}", sz);
-                    txt.set_property("font-desc", &font)?;
-                    txt.set_property("ypad", &margin)?; // from top edge
-                    txt.set_property("xpad", &margin)?; // from right edge
+                    set_property(&txt, "font-desc", &font)?;
+                    set_property(&txt, "ypad", &margin)?; // from top edge
+                    set_property(&txt, "xpad", &margin)?; // from right edge
                 }
                 _ => (),
             }
@@ -1079,28 +1109,15 @@ impl StreamBuilder {
         for s in caps.iter() {
             match (s.get("width"), s.get("height")) {
                 (Some(width), Some(height)) => {
-                    vbx.set_property("top", &crop.top(height))?;
-                    vbx.set_property("bottom", &crop.bottom(height))?;
-                    vbx.set_property("left", &crop.left(width))?;
-                    vbx.set_property("right", &crop.right(width))?;
+                    set_property(&vbx, "top", &crop.top(height))?;
+                    set_property(&vbx, "bottom", &crop.bottom(height))?;
+                    set_property(&vbx, "left", &crop.left(width))?;
+                    set_property(&vbx, "right", &crop.right(width))?;
                 }
                 _ => (),
             }
         }
         Ok(())
-    }
-}
-
-/// Make a pipeline element
-fn make_element(factory_name: &'static str, name: Option<&str>)
-    -> Result<Element, Error>
-{
-    match ElementFactory::make(factory_name, name) {
-        Some(elem) => Ok(elem),
-        None => {
-            error!("make_element: {}", factory_name);
-            Err(Error::Other(factory_name))
-        }
     }
 }
 
