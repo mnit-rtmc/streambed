@@ -480,6 +480,13 @@ impl Sink {
             _ => Encoding::RAW,
         }
     }
+    /// Should config be inserted in-band?
+    fn insert_config(&self) -> bool {
+        match self {
+            Sink::RTP(_, _, _, true) => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for StreamBuilder {
@@ -611,6 +618,7 @@ impl StreamBuilder {
     fn is_rtp_passthru(&self) -> bool {
         self.source.is_rtp_or_rtsp() &&
         self.sink.is_rtp() &&
+        !self.sink.insert_config() &&
         !self.needs_transcode()
     }
 
@@ -632,7 +640,7 @@ impl StreamBuilder {
     /// Add RTP payload element
     fn add_rtp_pay(&mut self) -> Result<(), Error> {
         let pay = make_element(self.sink.encoding().rtp_pay()?, None)?;
-        if let Sink::RTP(_, _, _, true) = self.sink {
+        if self.sink.insert_config() {
             match self.sink.encoding() {
                 Encoding::MPEG4 => {
                     // send configuration headers once per second
