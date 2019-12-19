@@ -90,7 +90,10 @@ pub enum AspectRatio {
 }
 
 /// Video matrix crop configuration
+#[derive(Clone, Copy)]
 pub struct MatrixCrop {
+    /// Aspect ratio setting
+    aspect: AspectRatio,
     /// X-position `0..=7` in matrix
     x: u8,
     /// Y-position `0..=7` in matrix
@@ -116,7 +119,7 @@ pub enum Sink {
     /// RTP over UDP (addr, port, encoding, insert_config)
     RTP(String, i32, Encoding, bool),
     /// Window sink
-    WINDOW(AspectRatio, Option<MatrixCrop>),
+    WINDOW(MatrixCrop),
 }
 
 /// Feedback on stream playing/stopped
@@ -358,6 +361,20 @@ impl AspectRatio {
     }
 }
 
+impl Default for MatrixCrop {
+    fn default() -> Self {
+        MatrixCrop {
+            aspect: AspectRatio::default(),
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            hgap: 0,
+            vgap: 0,
+        }
+    }
+}
+
 impl TryFrom<&str> for MatrixCrop {
     type Error = Error;
 
@@ -378,7 +395,15 @@ impl TryFrom<&str> for MatrixCrop {
                 if hgap <= MatrixCrop::PERCENT / 2 &&
                    vgap <= MatrixCrop::PERCENT / 2
                 {
-                    return Ok(MatrixCrop { x, y, width, height, hgap, vgap });
+                    return Ok(MatrixCrop {
+                        aspect: AspectRatio::default(),
+                        x,
+                        y,
+                        width,
+                        height,
+                        hgap,
+                        vgap
+                    });
                 }
             }
         }
@@ -396,6 +421,11 @@ impl MatrixCrop {
             'A' ..= 'H' => Ok(c as u8 - b'A'),
             _ => Err(Error::InvalidCrop()),
         }
+    }
+
+    /// Check if window is cropped
+    fn is_cropped(&self) -> bool {
+        self.width > 1 || self.height > 1
     }
 
     /// Get number of pixels to crop from top edge
@@ -458,22 +488,15 @@ impl Sink {
         match (self, acceleration) {
             (Sink::FAKE, _) => "fakesink",
             (Sink::RTP(_, _, _, _), _) => "udpsink",
-            (Sink::WINDOW(_, _), Acceleration::VAAPI) => "vaapisink",
-            (Sink::WINDOW(_, _), _) => "gtksink",
-        }
-    }
-    /// Get the aspect ratio setting
-    fn aspect_ratio(&self) -> Option<AspectRatio> {
-        match self {
-            Sink::WINDOW(a, _) => Some(*a),
-            _ => None,
+            (Sink::WINDOW(_), Acceleration::VAAPI) => "vaapisink",
+            (Sink::WINDOW(_), _) => "gtksink",
         }
     }
     /// Get the matrix crop setting
-    fn crop(&self) -> &Option<MatrixCrop> {
+    fn crop(&self) -> MatrixCrop {
         match self {
-            Sink::WINDOW(_, c) => &c,
-            _ => &None,
+            Sink::WINDOW(c) => *c,
+            _ => MatrixCrop::default(),
         }
     }
     /// Get the sink encoding
@@ -584,7 +607,7 @@ impl StreamBuilder {
             self.add_encode()?;
             self.add_queue()?;
         }
-        if self.sink.crop().is_some() {
+        if self.sink.crop().is_cropped() {
             self.add_element(make_element("videobox", Some("vbox"))?)?;
         }
         if self.has_text() {
@@ -919,16 +942,15 @@ impl StreamBuilder {
     fn create_sink(&self) -> Result<Element, Error> {
         let sink = make_element(self.sink.factory_name(self.acceleration),
             Some("sink"))?;
-        if let Some(aspect) = self.sink.aspect_ratio() {
-            set_property(&sink, "force-aspect-ratio", &aspect.as_bool())?;
-        }
         match &self.sink {
             Sink::RTP(addr, port, _, _) => {
                 set_property(&sink, "host", addr)?;
                 set_property(&sink, "port", port)?;
                 set_property(&sink, "ttl-mc", &15)?;
             }
-            Sink::WINDOW(_, _) => {
+            Sink::WINDOW(crop) => {
+                set_property(&sink, "force-aspect-ratio",
+                    &crop.aspect.as_bool())?;
                 if let Some(handle) = self.handle {
                     match sink.clone().dynamic_cast::<VideoOverlay>() {
                         Ok(overlay) => unsafe {
@@ -1068,8 +1090,9 @@ impl StreamBuilder {
                 if self.has_text() {
                     self.configure_text(&pipeline);
                 }
-                if let Some(crop) = self.sink.crop() {
-                    self.configure_vbox(&pipeline, &crop);
+                let crop = self.sink.crop();
+                if crop.is_cropped() {
+                    self.configure_vbox(&pipeline, crop);
                 }
             }
             None => error!("pipeline gone -- {}", self),
@@ -1116,7 +1139,7 @@ impl StreamBuilder {
     }
 
     /// Configure videobox element
-    fn configure_vbox(&self, pipeline: &Pipeline, crop: &MatrixCrop) {
+    fn configure_vbox(&self, pipeline: &Pipeline, crop: MatrixCrop) {
         if let Some(vbx) = pipeline.get_by_name("vbox") {
             match vbx.get_static_pad("src") {
                 Some(src_pad) => {
@@ -1136,7 +1159,7 @@ impl StreamBuilder {
     }
 
     /// Configure videobox properties
-    fn config_vbox_props(&self, vbx: Element, caps: Caps, crop: &MatrixCrop)
+    fn config_vbox_props(&self, vbx: Element, caps: Caps, crop: MatrixCrop)
         -> Result<(), Error>
     {
         for s in caps.iter() {
