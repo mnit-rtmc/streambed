@@ -38,6 +38,9 @@ const FONT_SZ: u32 = 14;
 /// Default height (px)
 const DEFAULT_HEIGHT: u32 = 240;
 
+/// User agent including version
+const AGENT: &'static str = concat!("streambed/", env!("CARGO_PKG_VERSION"));
+
 /// Video encoding
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Encoding {
@@ -789,11 +792,14 @@ impl StreamBuilder {
     fn add_source_rtsp(&mut self) -> Result<(), Error> {
         let src = make_element("rtspsrc", None)?;
         set_property(&src, "location", &self.source.location)?;
-        set_property(&src, "tcp-timeout", &(2 * self.source.timeout_us()))?;
+        // TCP is required when packet loss is high
+        src.set_property_from_str("protocols", &"tcp");
+        set_property(&src, "tcp-timeout", &self.source.timeout_us())?;
         // Retry TCP after UDP timeout (0 for disabled)
         set_property(&src, "timeout", &self.source.timeout_us())?;
         set_property(&src, "latency", &self.source.latency)?;
         set_property(&src, "do-retransmission", &false)?;
+        set_property(&src, "user-agent", &AGENT)?;
         match src.connect("select-stream", false, |values| {
             let num = values[1].get::<u32>().unwrap();
             Some((num == STREAM_NUM_VIDEO).to_value())
