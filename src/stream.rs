@@ -1,4 +1,4 @@
-// stream.rs
+// flow.rs
 //
 // Copyright (C) 2019  Minnesota Department of Transportation
 //
@@ -122,11 +122,11 @@ pub enum Sink {
     WINDOW(MatrixCrop),
 }
 
-/// Feedback on stream playing/stopped
+/// Feedback on flow playing/stopped
 pub trait Feedback: Send {
-    /// Stream playing
+    /// Flow playing
     fn playing(&self);
-    /// Stream stopped
+    /// Flow stopped
     fn stopped(&self) -> bool;
 }
 
@@ -141,10 +141,10 @@ pub enum Acceleration {
     OMX,
 }
 
-/// Builder for video streams
+/// Builder for video flows
 #[derive(Default)]
-pub struct StreamBuilder {
-    /// Index of stream
+pub struct FlowBuilder {
+    /// Index of flow
     idx: usize,
     /// Video source config
     source: Source,
@@ -154,18 +154,18 @@ pub struct StreamBuilder {
     acceleration: Acceleration,
     /// Overlay text
     overlay_text: Option<String>,
-    /// Stream feedback
+    /// Flow feedback
     feedback: Option<Box<dyn Feedback>>,
     /// Video overlay handle
     handle: Option<usize>,
-    /// Pipeline for stream
+    /// Pipeline for flow
     pipeline: WeakRef<Pipeline>,
     /// Head element of pipeline
     head: Option<Element>,
 }
 
-/// Video stream
-pub struct Stream {
+/// Video flow
+pub struct Flow {
     /// Video pipeline
     pipeline: Pipeline,
     /// Pipeline message bus
@@ -515,17 +515,17 @@ impl Sink {
     }
 }
 
-impl fmt::Display for StreamBuilder {
+impl fmt::Display for FlowBuilder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Stream{} {}", self.idx, self.source.location)
+        write!(f, "Flow{} {}", self.idx, self.source.location)
     }
 }
 
-impl StreamBuilder {
+impl FlowBuilder {
 
-    /// Create a new stream builder
+    /// Create a new flow builder
     pub fn new(idx: usize) -> Self {
-        StreamBuilder {
+        FlowBuilder {
             idx,
             ..Default::default()
         }
@@ -555,7 +555,7 @@ impl StreamBuilder {
         self
     }
 
-    /// Use the specified stream feedback
+    /// Use the specified flow feedback
     pub fn with_feedback(mut self, feedback: Option<Box<dyn Feedback>>)
         -> Self
     {
@@ -569,8 +569,8 @@ impl StreamBuilder {
         self
     }
 
-    /// Build the stream
-    pub fn build(mut self) -> Result<Stream, Error> {
+    /// Build the flow
+    pub fn build(mut self) -> Result<Flow, Error> {
         let name = format!("m{}", self.idx);
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
@@ -578,10 +578,10 @@ impl StreamBuilder {
         let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
         bus.add_watch(move |_bus, m| self.handle_message(m));
-        let mut check = StreamCheck::new(pipeline.downgrade());
+        let mut check = FlowCheck::new(pipeline.downgrade());
         glib::source::timeout_add(timeout_ms, move || check.pts_check());
         pipeline.set_state(State::Playing).unwrap();
-        Ok(Stream {
+        Ok(Flow {
             pipeline,
             bus,
             pushed: 0,
@@ -778,7 +778,7 @@ impl StreamBuilder {
         }
     }
 
-    /// Add source elements for an RTP stream
+    /// Add source elements for an RTP flow
     fn add_source_rtp(&mut self) -> Result<(), Error> {
         if !self.source.is_rtsp() {
             let jtr = make_element("rtpjitterbuffer", Some("jitter"))?;
@@ -811,7 +811,7 @@ impl StreamBuilder {
         Ok(Caps::new_simple("application/x-rtp", &values[..]))
     }
 
-    /// Add source elements for an RTSP stream
+    /// Add source elements for an RTSP flow
     fn add_source_rtsp(&mut self) -> Result<(), Error> {
         let src = make_element("rtspsrc", None)?;
         set_property(&src, "location", &self.source.location)?;
@@ -833,7 +833,7 @@ impl StreamBuilder {
         }
     }
 
-    /// Add source elements for an HTTP stream
+    /// Add source elements for an HTTP flow
     fn add_source_http(&mut self) -> Result<(), Error> {
         let src = make_element("souphttpsrc", None)?;
         set_property(&src, "location", &self.location_http()?)?;
@@ -851,7 +851,7 @@ impl StreamBuilder {
         }
     }
 
-    /// Add source element for a test stream
+    /// Add source element for a test flow
     fn add_source_test(&mut self) -> Result<(), Error> {
         let src = make_element("videotestsrc", None)?;
         src.set_property_from_str("pattern", "smpte75");
@@ -1063,14 +1063,14 @@ impl StreamBuilder {
         glib::Continue(true)
     }
 
-    /// Play the stream
+    /// Play the flow
     fn play(&self) {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.set_state(State::Playing).unwrap();
         }
     }
 
-    /// Stop the stream
+    /// Stop the flow
     fn stop(&self) {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.set_state(State::Null).unwrap();
@@ -1177,9 +1177,9 @@ impl StreamBuilder {
     }
 }
 
-/// Stream PTS stuck check
-struct StreamCheck {
-    /// Stream pipeline
+/// Flow PTS stuck check
+struct FlowCheck {
+    /// Flow pipeline
     pipeline: WeakRef<Pipeline>,
     /// Count of checks
     count: usize,
@@ -1187,10 +1187,10 @@ struct StreamCheck {
     last_pts: ClockTime,
 }
 
-impl StreamCheck {
-    /// Create a new stream PTS stuck check
+impl FlowCheck {
+    /// Create a new flow PTS stuck check
     fn new(pipeline: WeakRef<Pipeline>) -> Self {
-        StreamCheck {
+        FlowCheck {
             pipeline,
             count: 0,
             last_pts: ClockTime::none(),
@@ -1258,14 +1258,14 @@ impl StreamCheck {
     }
 }
 
-impl Drop for Stream {
+impl Drop for Flow {
     fn drop(&mut self) {
         self.stop();
         self.bus.remove_watch().unwrap();
     }
 }
 
-impl Stream {
+impl Flow {
 
     /// Get packet statistics
     pub fn packet_stats(&mut self) -> Option<(u64, u64, u64)> {
@@ -1322,7 +1322,7 @@ impl Stream {
         false
     }
 
-    /// Stop the stream
+    /// Stop the flow
     pub fn stop(&self) {
         self.pipeline.set_state(State::Null).unwrap();
     }

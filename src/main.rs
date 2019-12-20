@@ -6,7 +6,7 @@ use clap::{App, Arg, ArgMatches, SubCommand};
 use log::info;
 use std::env;
 use streambed::{
-    Acceleration, Encoding, Error, Feedback, Sink, Source, StreamBuilder
+    Acceleration, Encoding, Error, Feedback, Sink, Source, FlowBuilder
 };
 
 /// Crate version
@@ -19,13 +19,13 @@ const ENCODINGS: &[&'static str] = &["MJPEG", "MPEG2", "MPEG4", "H264", "H265",
 struct Control { }
 
 impl Feedback for Control {
-    /// Stream playing
+    /// Flow playing
     fn playing(&self) {
-        info!("stream playing");
+        info!("flow playing");
     }
-    /// Stream stopped
+    /// Flow stopped
     fn stopped(&self) -> bool {
-        info!("stream stopped");
+        info!("flow stopped");
         true
     }
 }
@@ -111,7 +111,7 @@ fn run(_matches: &ArgMatches) -> Result<(), Error> {
     let _prog = args.next();
     let location = args.next().expect("Need location");
     let overlay_text = args.next();
-    let _stream = StreamBuilder::new(0)
+    let _flow = FlowBuilder::new(0)
         .with_acceleration(Acceleration::VAAPI)
         .with_source(Source::default()
             .with_location(&location)
