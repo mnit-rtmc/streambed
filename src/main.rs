@@ -3,7 +3,7 @@
 // Copyright (C) 2019  Minnesota Department of Transportation
 //
 use clap::{App, Arg, ArgMatches, SubCommand};
-use log::{info, warn};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::File;
@@ -28,7 +28,7 @@ struct Config {
     flow: Vec<FlowConfig>,
 }
 
-/// Source location
+/// Source location (cannot be empty string)
 #[derive(Debug, Deserialize, Serialize)]
 struct Location(String);
 
@@ -144,17 +144,27 @@ impl Config {
     /// Load configuration from file
     fn load() -> Self {
         match File::open(CONFIG_FILE) {
-            Ok(muon) => match muon_rs::from_reader(muon) {
+            Ok(rdr) => match muon_rs::from_reader(rdr) {
                 Ok(config) => config,
-                Err(_e) => {
-                    warn!("Error parsing {}", CONFIG_FILE);
+                Err(e) => {
+                    eprintln!("{:?} error parsing {}", e, CONFIG_FILE);
                     Self::default()
                 }
             }
             Err(e) => {
-                warn!("{:?} error reading {}", e.kind(), CONFIG_FILE);
+                eprintln!("{:?} error reading {}", e.kind(), CONFIG_FILE);
                 Self::default()
             }
+        }
+    }
+    /// Store configuration to file
+    fn store(&self) {
+        match File::create(CONFIG_FILE) {
+            Ok(writer) => match muon_rs::to_writer(writer, self) {
+                Ok(_) => (),
+                Err(_e) => eprintln!("Error storing {}", CONFIG_FILE),
+            }
+            Err(e) => eprintln!("{:?} error writing {}", e.kind(), CONFIG_FILE),
         }
     }
 }
@@ -162,14 +172,22 @@ impl Config {
 /// Config sub-command
 fn config_subcommand(matches: &ArgMatches) -> Result<(), Error> {
     let mut config = Config::load();
+    let mut param = false;
     if let Some(acceleration) = matches.value_of("acceleration") {
         config.acceleration = Some(acceleration.to_string());
+        println!("Setting `accel` => {}", acceleration);
+        param = true;
     }
     if let Some(flows) = matches.value_of("flows") {
         let flows: usize = flows.parse()?;
         config.flow.resize_with(flows, Default::default);
+        println!("Setting `flows` => {}", flows);
+        param = true;
     }
-    print!("{}", muon_rs::to_string(&config)?);
+    if !param {
+        print!("{}", muon_rs::to_string(&config)?);
+    }
+    Config::store(&config);
     Ok(())
 }
 
