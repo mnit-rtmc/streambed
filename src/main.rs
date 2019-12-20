@@ -2,10 +2,9 @@
 //
 // Copyright (C) 2019  Minnesota Department of Transportation
 //
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs::File;
 use std::str::FromStr;
 use streambed::{
@@ -53,6 +52,57 @@ struct FlowConfig {
     sink_encoding: Option<String>,
 }
 
+impl FlowConfig {
+    fn location(&self) -> &str {
+        &self.location.0
+    }
+    fn encoding(&self) -> Encoding {
+        match &self.encoding {
+            Some(e) => match e.parse() {
+                Ok(e) => e,
+                Err(_) => Encoding::default(),
+            }
+            None => Encoding::default(),
+        }
+    }
+    fn timeout(&self) -> u16 {
+        match self.timeout {
+            Some(t) => t,
+            None => 2,
+        }
+    }
+    fn latency(&self) -> u32 {
+        match self.latency {
+            Some(l) => l,
+            None => 200,
+        }
+    }
+    fn text(&self) -> Option<&str> {
+        match &self.text {
+            Some(t) => Some(&t),
+            None => None,
+        }
+    }
+    fn sink_encoding(&self) -> Encoding {
+        match &self.sink_encoding {
+            Some(e) => match e.parse() {
+                Ok(e) => e,
+                Err(_) => self.encoding(),
+            }
+            None => self.encoding(),
+        }
+    }
+    fn sink(&self) -> Sink {
+        match (&self.address, &self.port) {
+            (Some(address), Some(port)) => {
+                Sink::RTP(String::from(address), (*port).into(),
+                    self.sink_encoding(), true)
+            }
+            _ => Sink::FAKE,
+        }
+    }
+}
+
 struct Control { }
 
 impl Feedback for Control {
@@ -96,6 +146,7 @@ fn create_app(config: &Config) -> App<'static, 'static> {
     App::new("streambed")
         .version(VERSION)
         .about("Video streaming system")
+        .setting(AppSettings::ArgRequiredElseHelp)
         .subcommand(SubCommand::with_name("config")
             .about("Configure global settings")
             .display_order(1)
@@ -295,29 +346,38 @@ impl Config {
         self.store();
         Ok(())
     }
-}
 
-/// Run sub-command
-fn run_subcommand(_matches: &ArgMatches) -> Result<(), Error> {
-    gstreamer::init().unwrap();
-    let mut args = env::args();
-    let _prog = args.next();
-    let location = args.next().expect("Need location");
-    let overlay_text = args.next();
-    let _flow = FlowBuilder::new(0)
-        .with_acceleration(Acceleration::VAAPI)
-        .with_source(Source::default()
-            .with_location(&location)
-            .with_encoding(Encoding::H264)
-            .with_latency(0))
-        .with_overlay_text(overlay_text.as_ref().map(String::as_ref))
-        .with_sink(Sink::RTP("226.69.69.69".to_string(), 5000, Encoding::H264,
-            true))
-        .with_feedback(Some(Box::new(Control {})))
-        .build()?;
-    let mainloop = glib::MainLoop::new(None, false);
-    mainloop.run();
-    Ok(())
+    /// Run sub-command
+    fn run_subcommand(&self, _matches: &ArgMatches) -> Result<(), Error> {
+        if self.flow.len() == 0 {
+            eprintln!("No flows defined");
+            return Ok(());
+        }
+        gstreamer::init().unwrap();
+
+        let acceleration = match &self.acceleration {
+            Some(a) => a.parse::<Acceleration>()?,
+            None => Acceleration::NONE,
+        };
+        let mut flows = vec![];
+        for (i, flow_cfg) in self.flow.iter().enumerate() {
+            let flow = FlowBuilder::new(i)
+                .with_acceleration(acceleration)
+                .with_source(Source::default()
+                    .with_location(flow_cfg.location())
+                    .with_encoding(flow_cfg.encoding())
+                    .with_timeout(flow_cfg.timeout())
+                    .with_latency(flow_cfg.latency()))
+                .with_overlay_text(flow_cfg.text())
+                .with_sink(flow_cfg.sink())
+                .with_feedback(Some(Box::new(Control {})))
+                .build()?;
+            flows.push(flow);
+        }
+        let mainloop = glib::MainLoop::new(None, false);
+        mainloop.run();
+        Ok(())
+    }
 }
 
 /// Main function
@@ -327,7 +387,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match create_app(&config).get_matches().subcommand() {
         ("config", Some(matches)) => config.config_subcommand(matches)?,
         ("flow", Some(matches)) => config.flow_subcommand(matches)?,
-        ("run", Some(matches)) => run_subcommand(matches)?,
+        ("run", Some(matches)) => config.run_subcommand(matches)?,
         _ => unreachable!(),
     }
     Ok(())

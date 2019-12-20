@@ -13,6 +13,7 @@ use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{debug, error, info, trace, warn};
 use std::convert::TryFrom;
 use std::fmt;
+use std::str::FromStr;
 
 /// One second (microsecond units)
 const SEC_US: u64 = 1_000_000;
@@ -229,9 +230,41 @@ impl Default for Acceleration {
     }
 }
 
+impl FromStr for Acceleration {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "" | "none" => Ok(Self::NONE),
+            "vaapi" => Ok(Self::VAAPI),
+            "omx" => Ok(Self::OMX),
+            _ => Err(Error::Other("invalid acceleration")),
+        }
+    }
+}
+
 impl Default for Encoding {
     fn default() -> Self {
         Encoding::RAW
+    }
+}
+
+impl FromStr for Encoding {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "RAW" => Ok(Self::RAW),
+            "PNG" => Ok(Self::PNG),
+            "MJPEG" => Ok(Self::MJPEG),
+            "MPEG2" => Ok(Self::MPEG2),
+            "MPEG4" => Ok(Self::MPEG4),
+            "H264" | "" => Ok(Self::H264),
+            "H265" => Ok(Self::H265),
+            "VP8" => Ok(Self::VP8),
+            "VP9" => Ok(Self::VP9),
+            _ => Err(Error::Other("invalid encoding")),
+        }
     }
 }
 
