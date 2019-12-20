@@ -7,6 +7,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::File;
+use std::str::FromStr;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Sink, Source, FlowBuilder
 };
@@ -18,8 +19,8 @@ const VERSION: &'static str = std::env!("CARGO_PKG_VERSION");
 const CONFIG_FILE: &'static str = "streambed.muon";
 
 /// Possible video encodings
-const ENCODINGS: &[&'static str] = &["MJPEG", "MPEG2", "MPEG4", "H264", "H265",
-    "VP8", "VP9"];
+const ENCODINGS: &[&'static str] = &["", "MJPEG", "MPEG2", "MPEG4", "H264",
+    "H265", "VP8", "VP9"];
 
 /// Streambed configuration
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -66,8 +67,32 @@ impl Feedback for Control {
     }
 }
 
+/// Check if an argument is parseable
+fn is_parseable<T: FromStr>(value: String) -> Result<(), String> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    match value.parse::<T>() {
+        Ok(_) => Ok(()),
+        Err(_) => Err(String::from("Invalid argument")),
+    }
+}
+
+/// Check if a flows is valid
+fn check_flows(flows: usize, value: String) -> Result<(), String> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    match value.parse::<usize>() {
+        Ok(f) if f < flows => Ok(()),
+        Ok(_) => Err(String::from("Flow index out of bounds")),
+        _ => Err(String::from("Invalid argument")),
+    }
+}
+
 /// Create clap App
-fn create_app() -> App<'static, 'static> {
+fn create_app(config: &Config) -> App<'static, 'static> {
+    let flows = config.flow.len();
     App::new("streambed")
         .version(VERSION)
         .about("Video streaming system")
@@ -78,7 +103,8 @@ fn create_app() -> App<'static, 'static> {
                 .short("f")
                 .long("flows")
                 .help("total number of flows")
-                .value_name("total"))
+                .value_name("total")
+                .validator(is_parseable::<u8>))
             .arg(Arg::with_name("acceleration")
                 .short("a")
                 .long("accel")
@@ -91,14 +117,15 @@ fn create_app() -> App<'static, 'static> {
             .arg(Arg::with_name("number")
                 .index(1)
                 .required(true)
-                .help("flow number (starting with 0)")
+                .help("flow index number")
                 .takes_value(true)
-            )
-            .arg(Arg::with_name("source")
-                .short("s")
-                .long("source")
+                .validator(move |v| check_flows(flows, v)))
+            .arg(Arg::with_name("location")
+                .short("u")
+                .long("location")
                 .help("source location or URI")
-                .value_name("uri"))
+                .value_name("uri")
+                .empty_values(false))
             .arg(Arg::with_name("source-encoding")
                 .short("e")
                 .long("source-encoding")
@@ -109,12 +136,14 @@ fn create_app() -> App<'static, 'static> {
                 .short("t")
                 .long("timeout")
                 .help("source timeout in seconds")
-                .value_name("sec"))
+                .value_name("sec")
+                .validator(is_parseable::<u16>))
             .arg(Arg::with_name("latency")
                 .short("l")
                 .long("latency")
                 .help("buffering latency in milliseconds")
-                .value_name("ms"))
+                .value_name("ms")
+                .validator(is_parseable::<u32>))
             .arg(Arg::with_name("address")
                 .short("a")
                 .long("address")
@@ -124,7 +153,8 @@ fn create_app() -> App<'static, 'static> {
                 .short("p")
                 .long("port")
                 .help("sink UDP port")
-                .takes_value(true))
+                .takes_value(true)
+                .validator(is_parseable::<u16>))
             .arg(Arg::with_name("sink-encoding")
                 .short("n")
                 .long("sink-encoding")
@@ -167,33 +197,104 @@ impl Config {
             Err(e) => eprintln!("{:?} error writing {}", e.kind(), CONFIG_FILE),
         }
     }
-}
 
-/// Config sub-command
-fn config_subcommand(matches: &ArgMatches) -> Result<(), Error> {
-    let mut config = Config::load();
-    let mut param = false;
-    if let Some(acceleration) = matches.value_of("acceleration") {
-        config.acceleration = Some(acceleration.to_string());
-        println!("Setting `accel` => {}", acceleration);
-        param = true;
+    /// Config sub-command
+    fn config_subcommand(mut self, matches: &ArgMatches) -> Result<(), Error> {
+        let mut param = false;
+        if let Some(acceleration) = matches.value_of("acceleration") {
+            self.acceleration = Some(acceleration.to_string());
+            println!("Setting `accel` => {}", acceleration);
+            param = true;
+        }
+        if let Some(flows) = matches.value_of("flows") {
+            let flows: usize = flows.parse()?;
+            self.flow.resize_with(flows, Default::default);
+            println!("Setting `flows` => {}", flows);
+            param = true;
+        }
+        if !param {
+            println!("\n{}", muon_rs::to_string(&self)?);
+        }
+        self.store();
+        Ok(())
     }
-    if let Some(flows) = matches.value_of("flows") {
-        let flows: usize = flows.parse()?;
-        config.flow.resize_with(flows, Default::default);
-        println!("Setting `flows` => {}", flows);
-        param = true;
-    }
-    if !param {
-        print!("{}", muon_rs::to_string(&config)?);
-    }
-    Config::store(&config);
-    Ok(())
-}
 
-/// Flow sub-command
-fn flow_subcommand(_matches: &ArgMatches) -> Result<(), Error> {
-    todo!();
+    /// Flow sub-command
+    fn flow_subcommand(mut self, matches: &ArgMatches) -> Result<(), Error> {
+        let number = matches.value_of("number").unwrap();
+        let number: usize = number.parse()?;
+        let mut flow = &mut self.flow[number];
+        let mut param = false;
+        if let Some(location) = matches.value_of("location") {
+            flow.location = Location { 0: String::from(location) };
+            println!("Setting `location` => {}", location);
+            param = true;
+        }
+        if let Some(encoding) = matches.value_of("source-encoding") {
+            flow.encoding = if encoding.len() > 0 {
+                Some(String::from(encoding))
+            } else {
+                None
+            };
+            println!("Setting `encoding` => {}", encoding);
+            param = true;
+        }
+        if let Some(timeout) = matches.value_of("timeout") {
+            flow.timeout = Some(timeout.parse()?);
+            println!("Setting `timeout` => {}", timeout);
+            param = true;
+        }
+        if let Some(latency) = matches.value_of("latency") {
+            flow.latency = if latency.len() > 0 {
+                Some(latency.parse()?)
+            } else {
+                None
+            };
+            println!("Setting `latency` => {}", latency);
+            param = true;
+        }
+        if let Some(address) = matches.value_of("address") {
+            flow.address = if address.len() > 0 {
+                Some(String::from(address))
+            } else {
+                None
+            };
+            println!("Setting `address` => {}", address);
+            param = true;
+        }
+        if let Some(port) = matches.value_of("port") {
+            flow.port = if port.len() > 0 {
+                Some(port.parse()?)
+            } else {
+                None
+            };
+            println!("Setting `port` => {}", port);
+            param = true;
+        }
+        if let Some(encoding) = matches.value_of("sink-encoding") {
+            flow.sink_encoding = if encoding.len() > 0 {
+                Some(String::from(encoding))
+            } else {
+                None
+            };
+            println!("Setting `sink_encoding` => {}", encoding);
+            param = true;
+        }
+        if let Some(text) = matches.value_of("text") {
+            flow.text = if text.len() > 0 {
+                Some(String::from(text))
+            } else {
+                None
+            };
+            println!("Setting `text` => {}", text);
+            param = true;
+        }
+        if !param {
+            println!("\n{}", muon_rs::to_string(flow)?);
+        }
+        self.store();
+        Ok(())
+    }
 }
 
 /// Run sub-command
@@ -222,9 +323,10 @@ fn run_subcommand(_matches: &ArgMatches) -> Result<(), Error> {
 /// Main function
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder().format_timestamp(None).init();
-    match create_app().get_matches().subcommand() {
-        ("config", Some(matches)) => config_subcommand(matches)?,
-        ("flow", Some(matches)) => flow_subcommand(matches)?,
+    let config = Config::load();
+    match create_app(&config).get_matches().subcommand() {
+        ("config", Some(matches)) => config.config_subcommand(matches)?,
+        ("flow", Some(matches)) => config.flow_subcommand(matches)?,
         ("run", Some(matches)) => run_subcommand(matches)?,
         _ => unreachable!(),
     }
