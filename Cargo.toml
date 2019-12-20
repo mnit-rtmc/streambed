@@ -8,9 +8,11 @@ repository = "https://github.com/mnit-rtmc/streambed"
 edition = "2018"
 
 [dependencies]
-clap = "2.33.0"
+clap = "2.33"
 env_logger = "0.7"
-glib = "0.8.2"
-gstreamer = "0.14.5"
-gstreamer-video = "0.14.5"
-log = "0.4.8"
+glib = "0.8"
+gstreamer = "0.14"
+gstreamer-video = "0.14"
+log = "0.4"
+muon-rs = "0.2"
+serde = { version = "1.0", features = ["derive"] }

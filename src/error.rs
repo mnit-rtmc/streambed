@@ -1,3 +1,4 @@
+use muon_rs::Error as MuonError;
 use std::fmt;
 use std::num::{ParseIntError, TryFromIntError};
 
@@ -11,6 +12,8 @@ pub enum Error {
     InvalidCrop(),
     ParseInt(ParseIntError),
     TryFromInt(TryFromIntError),
+    Io(std::io::Error),
+    Muon(MuonError),
     Other(&'static str),
 }
 
@@ -25,6 +28,8 @@ impl fmt::Display for Error {
             Error::InvalidCrop() => write!(f, "invalid crop"),
             Error::ParseInt(e) => write!(f, "parse {:?}", e),
             Error::TryFromInt(e) => write!(f, "try_from {:?}", e),
+            Error::Io(e) => write!(f, "IO {:?}", e),
+            Error::Muon(e) => write!(f, "muon {:?}", e),
             Error::Other(e) => write!(f, "{:?}", e),
         }
     }
@@ -49,5 +54,17 @@ impl From<ParseIntError> for Error {
 impl From<TryFromIntError> for Error {
     fn from(e: TryFromIntError) -> Self {
         Error::TryFromInt(e)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+impl From<MuonError> for Error {
+    fn from(e: MuonError) -> Self {
+        Error::Muon(e)
     }
 }

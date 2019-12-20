@@ -3,8 +3,10 @@
 // Copyright (C) 2019  Minnesota Department of Transportation
 //
 use clap::{App, Arg, ArgMatches, SubCommand};
-use log::info;
+use log::{info, warn};
+use serde::{Deserialize, Serialize};
 use std::env;
+use std::fs::File;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Sink, Source, FlowBuilder
 };
@@ -12,9 +14,43 @@ use streambed::{
 /// Crate version
 const VERSION: &'static str = std::env!("CARGO_PKG_VERSION");
 
+/// Configuration file name
+const CONFIG_FILE: &'static str = "streambed.muon";
+
 /// Possible video encodings
 const ENCODINGS: &[&'static str] = &["MJPEG", "MPEG2", "MPEG4", "H264", "H265",
     "VP8", "VP9"];
+
+/// Streambed configuration
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct Config {
+    acceleration: Option<String>,
+    flow: Vec<FlowConfig>,
+}
+
+/// Source location
+#[derive(Debug, Deserialize, Serialize)]
+struct Location(String);
+
+impl Default for Location {
+    fn default() -> Self {
+        Location { 0: "test".to_string() }
+    }
+}
+
+/// Configuration for one flow
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct FlowConfig {
+    location: Location,
+    encoding: Option<String>,
+    timeout: Option<u16>,
+    latency: Option<u32>,
+    sprops: Option<String>,
+    text: Option<String>,
+    address: Option<String>,
+    port: Option<u16>,
+    sink_encoding: Option<String>,
+}
 
 struct Control { }
 
@@ -104,8 +140,46 @@ fn create_app() -> App<'static, 'static> {
             .about("Run streambed video system"))
 }
 
-/// Run video system
-fn run(_matches: &ArgMatches) -> Result<(), Error> {
+impl Config {
+    /// Load configuration from file
+    fn load() -> Self {
+        match File::open(CONFIG_FILE) {
+            Ok(muon) => match muon_rs::from_reader(muon) {
+                Ok(config) => config,
+                Err(_e) => {
+                    warn!("Error parsing {}", CONFIG_FILE);
+                    Self::default()
+                }
+            }
+            Err(e) => {
+                warn!("{:?} error reading {}", e.kind(), CONFIG_FILE);
+                Self::default()
+            }
+        }
+    }
+}
+
+/// Config sub-command
+fn config_subcommand(matches: &ArgMatches) -> Result<(), Error> {
+    let mut config = Config::load();
+    if let Some(acceleration) = matches.value_of("acceleration") {
+        config.acceleration = Some(acceleration.to_string());
+    }
+    if let Some(flows) = matches.value_of("flows") {
+        let flows: usize = flows.parse()?;
+        config.flow.resize_with(flows, Default::default);
+    }
+    print!("{}", muon_rs::to_string(&config)?);
+    Ok(())
+}
+
+/// Flow sub-command
+fn flow_subcommand(_matches: &ArgMatches) -> Result<(), Error> {
+    todo!();
+}
+
+/// Run sub-command
+fn run_subcommand(_matches: &ArgMatches) -> Result<(), Error> {
     gstreamer::init().unwrap();
     let mut args = env::args();
     let _prog = args.next();
@@ -131,8 +205,10 @@ fn run(_matches: &ArgMatches) -> Result<(), Error> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder().format_timestamp(None).init();
     match create_app().get_matches().subcommand() {
-        ("run", Some(matches)) => run(matches)?,
-        _ => todo!(),
+        ("config", Some(matches)) => config_subcommand(matches)?,
+        ("flow", Some(matches)) => flow_subcommand(matches)?,
+        ("run", Some(matches)) => run_subcommand(matches)?,
+        _ => unreachable!(),
     }
     Ok(())
 }
