@@ -183,13 +183,10 @@ pub struct Flow {
 fn make_element(factory_name: &'static str, name: Option<&str>)
     -> Result<Element, Error>
 {
-    match ElementFactory::make(factory_name, name) {
-        Some(elem) => Ok(elem),
-        None => {
-            error!("make_element: {}", factory_name);
-            Err(Error::MissingElement(factory_name))
-        }
-    }
+    ElementFactory::make(factory_name, name).map_err(|_| {
+        error!("make_element: {}", factory_name);
+        Error::MissingElement(factory_name)
+    })
 }
 
 /// Set a property of an element
@@ -610,7 +607,9 @@ impl FlowBuilder {
         self.add_elements()?;
         let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
-        bus.add_watch(move |_bus, m| self.handle_message(m));
+        if let Err(_) = bus.add_watch(move |_bus, m| self.handle_message(m)) {
+            return Err(Error::ConnectSignal("watch"));
+        }
         let mut check = FlowCheck::new(pipeline.downgrade());
         glib::source::timeout_add(timeout_ms, move || check.pts_check());
         pipeline.set_state(State::Playing).unwrap();
@@ -857,12 +856,14 @@ impl FlowBuilder {
         set_property(&src, "do-retransmission", &false)?;
         set_property(&src, "user-agent", &AGENT)?;
         match src.connect("select-stream", false, |values| {
-            let num = values[1].get::<u32>().unwrap();
-            Some((num == STREAM_NUM_VIDEO).to_value())
+            match values[1].get::<u32>() {
+                Ok(Some(num)) => Some((num == STREAM_NUM_VIDEO).to_value()),
+                _ => None,
+            }
         })
         {
             Ok(_) => self.add_element(src),
-            Err(_) => Err(Error::ConnectSignal()),
+            Err(_) => Err(Error::ConnectSignal("select-stream")),
         }
     }
 
@@ -1155,17 +1156,14 @@ impl FlowBuilder {
     /// Configure text overlay properties
     fn config_txt_props(&self, txt: Element, caps: Caps) -> Result<(), Error> {
         for s in caps.iter() {
-            match s.get::<i32>("height") {
-                Some(height) => {
-                    let sz = FONT_SZ * u32::try_from(height)? / DEFAULT_HEIGHT;
-                    let margin = i32::try_from(sz / 2)?;
-                    debug!("font sz: {}, height: {} -- {}", sz, height, self);
-                    let font = format!("Overpass, Bold {}", sz);
-                    set_property(&txt, "font-desc", &font)?;
-                    set_property(&txt, "ypad", &margin)?; // from top edge
-                    set_property(&txt, "xpad", &margin)?; // from right edge
-                }
-                _ => (),
+            if let Ok(Some(height)) = s.get::<i32>("height") {
+                let sz = FONT_SZ * u32::try_from(height)? / DEFAULT_HEIGHT;
+                let margin = i32::try_from(sz / 2)?;
+                debug!("font sz: {}, height: {} -- {}", sz, height, self);
+                let font = format!("Overpass, Bold {}", sz);
+                set_property(&txt, "font-desc", &font)?;
+                set_property(&txt, "ypad", &margin)?; // from top edge
+                set_property(&txt, "xpad", &margin)?; // from right edge
             }
         }
         Ok(())
@@ -1197,7 +1195,7 @@ impl FlowBuilder {
     {
         for s in caps.iter() {
             match (s.get("width"), s.get("height")) {
-                (Some(width), Some(height)) => {
+                (Ok(Some(width)), Ok(Some(height))) => {
                     set_property(&vbx, "top", &crop.top(height))?;
                     set_property(&vbx, "bottom", &crop.bottom(height))?;
                     set_property(&vbx, "left", &crop.left(width))?;
@@ -1266,7 +1264,7 @@ impl FlowCheck {
         match sink.get_property("last-sample") {
             Ok(sample) => {
                 match sample.get::<Sample>() {
-                    Some(sample) => {
+                    Ok(Some(sample)) => {
                         match sample.get_buffer() {
                             Some(buffer) => {
                                 let pts = buffer.get_pts();
@@ -1282,7 +1280,7 @@ impl FlowCheck {
                             None => error!("sample buffer missing"),
                         }
                     }
-                    None => debug!("last-sample missing: {}", self.count),
+                    _ => debug!("last-sample missing: {}", self.count),
                 }
             }
             Err(_) => error!("get last-sample failed"),
@@ -1334,12 +1332,13 @@ impl Flow {
         match jitter.get_property("stats") {
             Ok(stats) => {
                 match stats.get::<Structure>() {
-                    Some(stats) => {
+                    Ok(Some(stats)) => {
                         let pushed = stats.get::<u64>("num-pushed");
                         let lost = stats.get::<u64>("num-lost");
                         let late = stats.get::<u64>("num-late");
                         match (pushed, lost, late) {
-                            (Some(pushed), Some(lost), Some(late)) => {
+                            (Ok(Some(pushed)), Ok(Some(lost)), Ok(Some(late))) =>
+                            {
                                 self.pushed = pushed;
                                 self.lost = lost;
                                 self.late = late;
@@ -1347,7 +1346,7 @@ impl Flow {
                             _ => warn!("stats empty"),
                         }
                     }
-                    None => warn!("missing stats"),
+                    _ => warn!("missing stats"),
                 }
             }
             Err(_) => warn!("failed to get jitter stats"),

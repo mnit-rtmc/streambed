@@ -6,7 +6,7 @@ use std::num::{ParseIntError, TryFromIntError};
 pub enum Error {
     MissingElement(&'static str),
     InvalidProperty(&'static str),
-    ConnectSignal(),
+    ConnectSignal(&'static str),
     PipelineAdd(),
     LinkElement(),
     InvalidCrop(),
@@ -22,7 +22,7 @@ impl fmt::Display for Error {
         match self {
             Error::MissingElement(e) => write!(f, "missing element: {}", e),
             Error::InvalidProperty(e) => write!(f, "invalid property: {}", e),
-            Error::ConnectSignal() => write!(f, "connect signal"),
+            Error::ConnectSignal(e) => write!(f, "connect signal: {}", e),
             Error::PipelineAdd() => write!(f, "pipeline add"),
             Error::LinkElement() => write!(f, "link elements"),
             Error::InvalidCrop() => write!(f, "invalid crop"),

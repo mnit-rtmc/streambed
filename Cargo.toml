@@ -10,9 +10,9 @@ edition = "2018"
 [dependencies]
 clap = "2.33"
 env_logger = "0.7"
-glib = "0.8"
-gstreamer = "0.14"
-gstreamer-video = "0.14"
+glib = "0.9"
+gstreamer = "0.15"
+gstreamer-video = "0.15"
 log = "0.4"
 muon-rs = "0.2"
 serde = { version = "1.0", features = ["derive"] }
