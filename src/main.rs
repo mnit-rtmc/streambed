@@ -41,21 +41,28 @@ impl Default for Location {
 /// Configuration for one flow
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct FlowConfig {
+    /// Source location URI
     location: Location,
+    /// Source encoding
     encoding: Option<String>,
+    /// Source timeout in seconds
     timeout: Option<u16>,
+    /// Buffering latency in milliseconds
     latency: Option<u32>,
+    /// SDP parameter sets
     sprops: Option<String>,
+    /// Overlay text
     text: Option<String>,
+    /// Sink address
     address: Option<String>,
+    /// Sink port
     port: Option<u16>,
+    /// Sink encoding
     sink_encoding: Option<String>,
 }
 
 impl FlowConfig {
-    fn location(&self) -> &str {
-        &self.location.0
-    }
+    /// Get source encoding
     fn encoding(&self) -> Encoding {
         match &self.encoding {
             Some(e) => match e.parse() {
@@ -65,24 +72,36 @@ impl FlowConfig {
             None => Encoding::default(),
         }
     }
+    /// Get source timeout
     fn timeout(&self) -> u16 {
         match self.timeout {
             Some(t) => t,
             None => 2,
         }
     }
+    /// Get buffering latency
     fn latency(&self) -> u32 {
         match self.latency {
             Some(l) => l,
             None => 200,
         }
     }
+    /// Get source
+    fn source(&self) -> Source {
+        Source::default()
+            .with_location(&self.location.0)
+            .with_encoding(self.encoding())
+            .with_timeout(self.timeout())
+            .with_latency(self.latency())
+    }
+    /// Get overlay text
     fn text(&self) -> Option<&str> {
         match &self.text {
             Some(t) => Some(&t),
             None => None,
         }
     }
+    /// Get sink encoding
     fn sink_encoding(&self) -> Encoding {
         match &self.sink_encoding {
             Some(e) => match e.parse() {
@@ -92,6 +111,7 @@ impl FlowConfig {
             None => self.encoding(),
         }
     }
+    /// Get sink
     fn sink(&self) -> Sink {
         match (&self.address, &self.port) {
             (Some(address), Some(port)) => {
@@ -363,11 +383,7 @@ impl Config {
         for (i, flow_cfg) in self.flow.iter().enumerate() {
             let flow = FlowBuilder::new(i)
                 .with_acceleration(acceleration)
-                .with_source(Source::default()
-                    .with_location(flow_cfg.location())
-                    .with_encoding(flow_cfg.encoding())
-                    .with_timeout(flow_cfg.timeout())
-                    .with_latency(flow_cfg.latency()))
+                .with_source(flow_cfg.source())
                 .with_overlay_text(flow_cfg.text())
                 .with_sink(flow_cfg.sink())
                 .with_feedback(Some(Box::new(Control {})))
