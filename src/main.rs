@@ -5,7 +5,7 @@
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::fs::{create_dir_all, File};
 use std::path::PathBuf;
 use std::str::FromStr;
 use streambed::{
@@ -246,7 +246,7 @@ fn create_app(config: &Config) -> App<'static, 'static> {
                 .possible_values(ENCODINGS))
             .arg(Arg::with_name("overlay-text")
                 .short("x")
-                .long("overlay text")
+                .long("overlay-text")
                 .help("overlay text (requires transcoding)")
                 .takes_value(true)))
         .subcommand(SubCommand::with_name("run")
@@ -269,7 +269,7 @@ impl Config {
                 Ok(config) => config,
                 Err(e) => {
                     eprintln!("{:?} error parsing {:?}", e, path);
-                    Self::default()
+                    panic!("Invalid configuration");
                 }
             }
             Err(e) => {
@@ -281,10 +281,14 @@ impl Config {
     /// Store configuration to file
     fn store(&self) {
         let path = Config::path();
+        if !path.exists() {
+            if let Err(e) = create_dir_all(&path.parent().unwrap()) {
+                eprintln!("{:?} error creating {:?}", e.kind(), path);
+            }
+        }
         match File::create(&path) {
-            Ok(writer) => match muon_rs::to_writer(writer, self) {
-                Ok(_) => (),
-                Err(_e) => eprintln!("Error storing {:?}", path),
+            Ok(writer) => if let Err(_e) = muon_rs::to_writer(writer, self) {
+                eprintln!("Error storing {:?}", path);
             }
             Err(e) => eprintln!("{:?} error writing {:?}", e.kind(), path),
         }
