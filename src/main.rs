@@ -24,7 +24,11 @@ const ENCODINGS: &[&'static str] = &["", "MJPEG", "MPEG2", "MPEG4", "H264",
 /// Streambed configuration
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct Config {
+    /// Control port (TCP)
+    control_port: Option<u16>,
+    /// Video acceleration method
     acceleration: Option<String>,
+    /// All flows
     flow: Vec<FlowConfig>,
 }
 
@@ -171,18 +175,24 @@ fn create_app(config: &Config) -> App<'static, 'static> {
         .subcommand(SubCommand::with_name("config")
             .about("Configure global settings")
             .display_order(1)
+            .arg(Arg::with_name("acceleration")
+                .short("a")
+                .long("acceleration")
+                .help("acceleration method")
+                .value_name("method")
+                .possible_values(&["NONE", "VAAPI", "OMX"]))
+            .arg(Arg::with_name("control-port")
+                .short("c")
+                .long("control-port")
+                .help("TCP control port")
+                .takes_value(true)
+                .validator(is_parseable::<u16>))
             .arg(Arg::with_name("flows")
                 .short("f")
                 .long("flows")
                 .help("total number of flows")
                 .value_name("total")
-                .validator(is_parseable::<u8>))
-            .arg(Arg::with_name("acceleration")
-                .short("a")
-                .long("accel")
-                .help("acceleration method")
-                .value_name("method")
-                .possible_values(&["NONE", "VAAPI", "OMX"])))
+                .validator(is_parseable::<u8>)))
         .subcommand(SubCommand::with_name("flow")
             .about("Configure a video flow")
             .display_order(2)
@@ -275,7 +285,16 @@ impl Config {
         let mut param = false;
         if let Some(acceleration) = matches.value_of("acceleration") {
             self.acceleration = Some(acceleration.to_string());
-            println!("Setting `accel` => {}", acceleration);
+            println!("Setting `acceleration` => {}", acceleration);
+            param = true;
+        }
+        if let Some(port) = matches.value_of("control-port") {
+            self.control_port = if port.len() > 0 {
+                Some(port.parse()?)
+            } else {
+                None
+            };
+            println!("Setting `control-port` => {}", port);
             param = true;
         }
         if let Some(flows) = matches.value_of("flows") {

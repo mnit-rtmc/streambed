@@ -28,13 +28,14 @@ Use `streambed --help` for instructions on how to configure the service.
 
 ## Control Protocol
 
-A single connection is accepted on TCP port 7001.
+If `control-port` is specified, _streambed_ listens for connections on that TCP
+port.  No more than a single connection is accepted at a time.
 
 Each message ends with an ASCII group separator (`U+001D`).  Each parameter of
 a message is delimited by an ASCII record separator (`U+001E`).  The parameter
 and value (if any) are delimited by the ASCII unit separator (`U+001F`).  Any
 parameter not specified is left unchanged, or default values are used.  The
-first parameter of a message has no _value_.
+message name has no associated _value_.
 
 `IN` messages are acknowledged with an `OUT` response containing only the first
 field.
@@ -43,11 +44,11 @@ field.
 
 A `config` message sets global values.
 
-Parameter | Description
-----------|-----------------------------------------------------
-`accel`   | Video acceleration method: `NONE`, `VAAPI`, or `OMX`
-`flows`   | Total number of flows: `0` to `255`
-`grid`    | Flows in window grid: `0` to `16`
+Parameter      | Description
+---------------|-----------------------------------------------------
+`acceleration` | Video acceleration method: `NONE`, `VAAPI`, or `OMX`
+`flows`        | Total number of flows: `0` to `255`
+`grid`         | Flows in window grid: `0` to `16`
 
 ### Flow (`IN`)
 
