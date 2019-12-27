@@ -67,12 +67,12 @@ Parameter         | Description
 `port`            | sink UDP port
 `sink-encoding`   | only set if different than `source-encoding`
 `title-bar`       | `HIDE` or `SHOW`
-`accent`          | title bar accent color (rgb hex: `000000` -> black)
+`title-accent`    | title bar accent color (rgb hex: `000000` -> black)
 `font-size`       | title bar font size (pt)
 `monitor-id`      | title bar monitor ID
 `camera-id`       | title bar camera ID
-`title`           | title bar camera title
-`extra-label`     | title bar extra label
+`title-text`      | title bar text
+`title-extra`     | title bar extra text
 `aspect-ratio`    | `FILL` or `PRESERVE`
 `matrix-width`    | `1` to `8`
 `matrix-x`        | `0` to `matrix-width` minus one
@@ -83,15 +83,16 @@ Parameter         | Description
 
 ### Status (`OUT`)
 
-A `status` message is sent on flow state change or statistics update.
+A `status` message is sent on each flow state change or statistics update.
 
-Parameter | Description
-----------|----------------------------
-`number`  | `0` to `flows` minus one
-`state`   | `STARTING`, `PLAYING`, `FAILED`
-`pushed`  | pushed packet count
-`lost`    | lost packet count
-`late`    | late packet count
+Parameter  | Description
+-----------|----------------------------
+`number`   | `0` to `flows` minus one
+`location` | source location URI
+`state`    | `STARTING`, `PLAYING`, `FAILED`
+`pushed`   | pushed packet count
+`lost`     | lost packet count
+`late`     | late packet count
 
 
 [MuON]: https://github.com/muon-data/muon
