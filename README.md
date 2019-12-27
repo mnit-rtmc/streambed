@@ -31,14 +31,15 @@ Use `streambed --help` for instructions on how to configure the service.
 If `control-port` is specified, _streambed_ listens for connections on that TCP
 port.  No more than a single connection is accepted at a time.
 
-Each message ends with an ASCII group separator (`U+001D`).  Each parameter of
-a message is delimited by an ASCII record separator (`U+001E`).  The parameter
-and value (if any) are delimited by the ASCII unit separator (`U+001F`).  Any
-parameter not specified is left unchanged, or default values are used.  The
-message name has no associated _value_.
+A message consists of a **command**, followed by any number of **parameters**,
+ending with an ASCII group separator (`U+001D`).  Each parameter begins with an
+ASCII record separator (`U+001E`), followed by the parameter **name**, an ASCII
+unit separator (`U+001F`), and finally the **value**.
 
-`IN` messages are acknowledged with an `OUT` response containing only the first
-field.
+Any parameter not specified in a message is left unchanged.
+
+When an `IN` message is received, it is acknowledged with an `OUT` response
+containing the **command** and no parameters.
 
 ### Config (`IN`)
 
