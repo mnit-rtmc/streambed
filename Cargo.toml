@@ -9,6 +9,7 @@ edition = "2018"
 
 [dependencies]
 clap = "2.33"
+dirs = "2.0"
 env_logger = "0.7"
 glib = "0.9"
 gstreamer = "0.15"

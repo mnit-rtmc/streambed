@@ -6,6 +6,7 @@ use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
+use std::path::PathBuf;
 use std::str::FromStr;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Sink, Source, FlowBuilder
@@ -253,30 +254,39 @@ fn create_app(config: &Config) -> App<'static, 'static> {
 }
 
 impl Config {
+    /// Get config file path
+    fn path() -> PathBuf {
+        let mut path = dirs::config_dir().expect("No config directory");
+        path.push("streambed");
+        path.push(CONFIG_FILE);
+        path
+    }
     /// Load configuration from file
     fn load() -> Self {
-        match File::open(CONFIG_FILE) {
+        let path = Config::path();
+        match File::open(&path) {
             Ok(rdr) => match muon_rs::from_reader(rdr) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("{:?} error parsing {}", e, CONFIG_FILE);
+                    eprintln!("{:?} error parsing {:?}", e, path);
                     Self::default()
                 }
             }
             Err(e) => {
-                eprintln!("{:?} error reading {}", e.kind(), CONFIG_FILE);
+                eprintln!("{:?} error reading {:?}", e.kind(), path);
                 Self::default()
             }
         }
     }
     /// Store configuration to file
     fn store(&self) {
-        match File::create(CONFIG_FILE) {
+        let path = Config::path();
+        match File::create(&path) {
             Ok(writer) => match muon_rs::to_writer(writer, self) {
                 Ok(_) => (),
-                Err(_e) => eprintln!("Error storing {}", CONFIG_FILE),
+                Err(_e) => eprintln!("Error storing {:?}", path),
             }
-            Err(e) => eprintln!("{:?} error writing {}", e.kind(), CONFIG_FILE),
+            Err(e) => eprintln!("{:?} error writing {:?}", e.kind(), path),
         }
     }
 

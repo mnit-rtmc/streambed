@@ -21,8 +21,8 @@ The resulting file will be located at `./target/release/streambed`
 
 ## Configuration
 
-The streambed configuration file `~/.config/streambed/streambed.muon` is in
-[MuON] format.
+The streambed configuration file `streambed.muon` is in [MuON] format.  On
+Linux, it is located in the `~/.config/streambed/` directory.
 
 Use `streambed --help` for instructions on how to configure the service.
 
