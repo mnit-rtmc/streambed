@@ -52,7 +52,7 @@ struct FlowConfig {
     /// SDP parameter sets
     sprops: Option<String>,
     /// Overlay text
-    text: Option<String>,
+    overlay_text: Option<String>,
     /// Sink address
     address: Option<String>,
     /// Sink port
@@ -95,8 +95,8 @@ impl FlowConfig {
             .with_latency(self.latency())
     }
     /// Get overlay text
-    fn text(&self) -> Option<&str> {
-        match &self.text {
+    fn overlay_text(&self) -> Option<&str> {
+        match &self.overlay_text {
             Some(t) => Some(&t),
             None => None,
         }
@@ -233,9 +233,9 @@ fn create_app(config: &Config) -> App<'static, 'static> {
                 .help("sink encoding")
                 .value_name("encoding")
                 .possible_values(ENCODINGS))
-            .arg(Arg::with_name("text")
+            .arg(Arg::with_name("overlay-text")
                 .short("x")
-                .long("text")
+                .long("overlay text")
                 .help("overlay text (requires transcoding)")
                 .takes_value(true)))
         .subcommand(SubCommand::with_name("run")
@@ -352,13 +352,13 @@ impl Config {
             println!("Setting `sink_encoding` => {}", encoding);
             param = true;
         }
-        if let Some(text) = matches.value_of("text") {
-            flow.text = if text.len() > 0 {
+        if let Some(text) = matches.value_of("overlay-text") {
+            flow.overlay_text = if text.len() > 0 {
                 Some(String::from(text))
             } else {
                 None
             };
-            println!("Setting `text` => {}", text);
+            println!("Setting `overlay-text` => {}", text);
             param = true;
         }
         if !param {
@@ -385,7 +385,7 @@ impl Config {
             let flow = FlowBuilder::new(i)
                 .with_acceleration(acceleration)
                 .with_source(flow_cfg.source())
-                .with_overlay_text(flow_cfg.text())
+                .with_overlay_text(flow_cfg.overlay_text())
                 .with_sink(flow_cfg.sink())
                 .with_feedback(Some(Box::new(Control {})))
                 .build()?;
