@@ -232,9 +232,9 @@ impl FromStr for Acceleration {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "" | "none" => Ok(Self::NONE),
-            "vaapi" => Ok(Self::VAAPI),
-            "omx" => Ok(Self::OMX),
+            "" | "NONE" => Ok(Self::NONE),
+            "VAAPI" => Ok(Self::VAAPI),
+            "OMX" => Ok(Self::OMX),
             _ => Err(Error::Other("invalid acceleration")),
         }
     }

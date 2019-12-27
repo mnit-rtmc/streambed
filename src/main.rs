@@ -181,7 +181,7 @@ fn create_app(config: &Config) -> App<'static, 'static> {
                 .long("accel")
                 .help("acceleration method")
                 .value_name("method")
-                .possible_values(&["none", "vaapi", "omx"])))
+                .possible_values(&["NONE", "VAAPI", "OMX"])))
         .subcommand(SubCommand::with_name("flow")
             .about("Configure a video flow")
             .display_order(2)
