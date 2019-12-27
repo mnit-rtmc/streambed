@@ -32,9 +32,9 @@ If `control-port` is specified, _streambed_ listens for connections on that TCP
 port.  No more than a single connection is accepted at a time.
 
 A message consists of a **command**, followed by any number of **parameters**,
-ending with an ASCII group separator (`U+001D`).  Each parameter begins with an
-ASCII record separator (`U+001E`), followed by the parameter **name**, an ASCII
-unit separator (`U+001F`), and finally the **value**.
+ending with an ASCII _group separator_ `U+001D`.  Each parameter begins with a
+_record separator_ `U+001E` followed by the parameter **name**, a _unit
+separator_ `U+001F`, then the **value**.
 
 Any parameter not specified in a message is left unchanged.
 
@@ -57,7 +57,7 @@ A `flow` message sets values for one flow.
 
 Parameter         | Description
 ------------------|----------------------------
-`number`          | `0` to flow count minus one
+`number`          | `0` to `flows` minus one
 `location`        | source location URI
 `source-encoding` | `PNG`, `MJPEG`, `MPEG2`, `MPEG4`, `H264`, `VP8`, `VP9`
 `timeout`         | source timeout in seconds
@@ -66,17 +66,18 @@ Parameter         | Description
 `address`         | sink UDP address
 `port`            | sink UDP port
 `sink-encoding`   | only set if different than `source-encoding`
+`title-bar`       | `HIDE` or `SHOW`
 `accent`          | title bar accent color (rgb hex: `000000` -> black)
-`font_sz`         | title bar font size (pt, `0` to hide title bar)
+`font-size`       | title bar font size (pt)
 `monitor-id`      | title bar monitor ID
 `camera-id`       | title bar camera ID
 `title`           | title bar camera title
 `extra-label`     | title bar extra label
 `aspect-ratio`    | `FILL` or `PRESERVE`
-`matrix-x`        | `0` to `matrix-width` minus one
 `matrix-width`    | `1` to `8`
-`matrix-Y`        | `0` to `matrix-height` minus one
+`matrix-x`        | `0` to `matrix-width` minus one
 `matrix-height`   | `1` to `8`
+`matrix-Y`        | `0` to `matrix-height` minus one
 `matrix-hgap`     | `0` to `10000` (hundredths of percent of window)
 `matrix-vgap`     | `0` to `10000` (hundredths of percent of window)
 
@@ -86,7 +87,7 @@ A `status` message is sent on flow state change or statistics update.
 
 Parameter | Description
 ----------|----------------------------
-`number`  | `0` to flow count minus one
+`number`  | `0` to `flows` minus one
 `state`   | `STARTING`, `PLAYING`, `FAILED`
 `pushed`  | pushed packet count
 `lost`    | lost packet count
