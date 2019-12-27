@@ -165,6 +165,7 @@ fn create_app(config: &Config) -> App<'static, 'static> {
     let flows = config.flow.len();
     App::new("streambed")
         .version(VERSION)
+        .setting(AppSettings::GlobalVersion)
         .about("Video streaming system")
         .setting(AppSettings::ArgRequiredElseHelp)
         .subcommand(SubCommand::with_name("config")
