@@ -1254,7 +1254,7 @@ impl FlowCheck {
                 }
             }
             None => {
-                warn!("pts_check pipeline gone");
+                debug!("pts_check pipeline gone");
                 glib::Continue(false)
             }
         }

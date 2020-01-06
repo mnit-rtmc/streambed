@@ -3,13 +3,17 @@
 // Copyright (C) 2019  Minnesota Department of Transportation
 //
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
-use log::info;
+use env_logger::Env;
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::fs::{create_dir_all, File};
+use std::io::{BufRead, BufReader};
+use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::thread;
 use streambed::{
-    Acceleration, Encoding, Error, Feedback, Sink, Source, FlowBuilder
+    Acceleration, Encoding, Error, Feedback, Flow, Sink, Source, FlowBuilder
 };
 
 /// Crate version
@@ -21,6 +25,27 @@ const CONFIG_FILE: &'static str = "streambed.muon";
 /// Possible video encodings
 const ENCODINGS: &[&'static str] = &["", "MJPEG", "MPEG2", "MPEG4", "H264",
     "H265", "VP8", "VP9"];
+
+/// ASCII group separator
+const SEP_GROUP: u8 = b'\x1D';
+
+/// ASCII record separator
+const SEP_RECORD: u8 = b'\x1E';
+
+/// ASCII unit separator
+const SEP_UNIT: u8 = b'\x1F';
+
+/// Command parameters
+trait Parameters<'a> {
+    /// Get the value of a command parameter
+    fn value(&'a self, p: &'a str) -> Option<&'a str>;
+}
+
+impl<'a> Parameters<'a> for ArgMatches<'a> {
+    fn value(&'a self, p: &'a str) -> Option<&'a str> {
+        self.value_of(p)
+    }
+}
 
 /// Streambed configuration
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -49,7 +74,7 @@ struct FlowConfig {
     /// Source location URI
     location: Location,
     /// Source encoding
-    encoding: Option<String>,
+    source_encoding: Option<String>,
     /// Source timeout in seconds
     timeout: Option<u16>,
     /// Buffering latency in milliseconds
@@ -68,8 +93,8 @@ struct FlowConfig {
 
 impl FlowConfig {
     /// Get source encoding
-    fn encoding(&self) -> Encoding {
-        match &self.encoding {
+    fn source_encoding(&self) -> Encoding {
+        match &self.source_encoding {
             Some(e) => match e.parse() {
                 Ok(e) => e,
                 Err(_) => Encoding::default(),
@@ -95,7 +120,7 @@ impl FlowConfig {
     fn source(&self) -> Source {
         Source::default()
             .with_location(&self.location.0)
-            .with_encoding(self.encoding())
+            .with_encoding(self.source_encoding())
             .with_timeout(self.timeout())
             .with_latency(self.latency())
     }
@@ -111,9 +136,9 @@ impl FlowConfig {
         match &self.sink_encoding {
             Some(e) => match e.parse() {
                 Ok(e) => e,
-                Err(_) => self.encoding(),
+                Err(_) => self.source_encoding(),
             }
-            None => self.encoding(),
+            None => self.source_encoding(),
         }
     }
     /// Get sink
@@ -253,6 +278,20 @@ fn create_app(config: &Config) -> App<'static, 'static> {
             .about("Run streambed video system"))
 }
 
+macro_rules! set_param {
+    ($num:expr, $param:expr) => {
+        info!(
+            concat!(
+                "Setting flow{} `",
+                stringify!($param),
+                "` => {}",
+            ),
+            $num,
+            $param,
+        );
+    }
+}
+
 impl Config {
     /// Get config file path
     fn path() -> PathBuf {
@@ -268,12 +307,12 @@ impl Config {
             Ok(rdr) => match muon_rs::from_reader(rdr) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("{:?} error parsing {:?}", e, path);
+                    error!("{:?} parsing {:?}", e, path);
                     panic!("Invalid configuration");
                 }
             }
             Err(e) => {
-                eprintln!("{:?} error reading {:?}", e.kind(), path);
+                error!("{:?} reading {:?}", e.kind(), path);
                 Self::default()
             }
         }
@@ -283,14 +322,14 @@ impl Config {
         let path = Config::path();
         if !path.exists() {
             if let Err(e) = create_dir_all(&path.parent().unwrap()) {
-                eprintln!("{:?} error creating {:?}", e.kind(), path);
+                error!("{:?} creating {:?}", e.kind(), path);
             }
         }
         match File::create(&path) {
             Ok(writer) => if let Err(_e) = muon_rs::to_writer(writer, self) {
-                eprintln!("Error storing {:?}", path);
+                error!("storing {:?}", path);
             }
-            Err(e) => eprintln!("{:?} error writing {:?}", e.kind(), path),
+            Err(e) => error!("{:?} writing {:?}", e.kind(), path),
         }
     }
 
@@ -299,7 +338,7 @@ impl Config {
         let mut param = false;
         if let Some(acceleration) = matches.value_of("acceleration") {
             self.acceleration = Some(acceleration.to_string());
-            println!("Setting `acceleration` => {}", acceleration);
+            info!("Setting `acceleration` => {}", acceleration);
             param = true;
         }
         if let Some(port) = matches.value_of("control-port") {
@@ -308,13 +347,13 @@ impl Config {
             } else {
                 None
             };
-            println!("Setting `control-port` => {}", port);
+            info!("Setting `control-port` => {}", port);
             param = true;
         }
         if let Some(flows) = matches.value_of("flows") {
             let flows: usize = flows.parse()?;
             self.flow.resize_with(flows, Default::default);
-            println!("Setting `flows` => {}", flows);
+            info!("Setting `flows` => {}", flows);
             param = true;
         }
         if !param {
@@ -325,96 +364,101 @@ impl Config {
     }
 
     /// Flow sub-command
-    fn flow_subcommand(mut self, matches: &ArgMatches) -> Result<(), Error> {
-        let number = matches.value_of("number").unwrap();
+    fn flow_subcommand<'a, P: Parameters<'a>>(&mut self, params: &'a P)
+        -> Result<usize, Error>
+    {
+        let number = params.value("number").unwrap();
         let number: usize = number.parse()?;
+        if number >= self.flow.len() {
+            return Err(Error::Other("Invalid flow number"));
+        }
         let mut flow = &mut self.flow[number];
         let mut param = false;
-        if let Some(location) = matches.value_of("location") {
+        if let Some(location) = params.value("location") {
             flow.location = Location { 0: String::from(location) };
-            println!("Setting `location` => {}", location);
+            set_param!(number, location);
             param = true;
         }
-        if let Some(encoding) = matches.value_of("source-encoding") {
-            flow.encoding = if encoding.len() > 0 {
-                Some(String::from(encoding))
+        if let Some(source_encoding) = params.value("source-encoding") {
+            flow.source_encoding = if source_encoding.len() > 0 {
+                Some(String::from(source_encoding))
             } else {
                 None
             };
-            println!("Setting `encoding` => {}", encoding);
+            set_param!(number, source_encoding);
             param = true;
         }
-        if let Some(timeout) = matches.value_of("timeout") {
+        if let Some(timeout) = params.value("timeout") {
             flow.timeout = Some(timeout.parse()?);
-            println!("Setting `timeout` => {}", timeout);
+            set_param!(number, timeout);
             param = true;
         }
-        if let Some(latency) = matches.value_of("latency") {
+        if let Some(latency) = params.value("latency") {
             flow.latency = if latency.len() > 0 {
                 Some(latency.parse()?)
             } else {
                 None
             };
-            println!("Setting `latency` => {}", latency);
+            set_param!(number, latency);
             param = true;
         }
-        if let Some(address) = matches.value_of("address") {
+        if let Some(address) = params.value("address") {
             flow.address = if address.len() > 0 {
                 Some(String::from(address))
             } else {
                 None
             };
-            println!("Setting `address` => {}", address);
+            set_param!(number, address);
             param = true;
         }
-        if let Some(port) = matches.value_of("port") {
+        if let Some(port) = params.value("port") {
             flow.port = if port.len() > 0 {
                 Some(port.parse()?)
             } else {
                 None
             };
-            println!("Setting `port` => {}", port);
+            set_param!(number, port);
             param = true;
         }
-        if let Some(encoding) = matches.value_of("sink-encoding") {
-            flow.sink_encoding = if encoding.len() > 0 {
-                Some(String::from(encoding))
+        if let Some(sink_encoding) = params.value("sink-encoding") {
+            flow.sink_encoding = if sink_encoding.len() > 0 {
+                Some(String::from(sink_encoding))
             } else {
                 None
             };
-            println!("Setting `sink_encoding` => {}", encoding);
+            set_param!(number, sink_encoding);
             param = true;
         }
-        if let Some(text) = matches.value_of("overlay-text") {
-            flow.overlay_text = if text.len() > 0 {
-                Some(String::from(text))
+        if let Some(overlay_text) = params.value("overlay-text") {
+            flow.overlay_text = if overlay_text.len() > 0 {
+                Some(String::from(overlay_text))
             } else {
                 None
             };
-            println!("Setting `overlay-text` => {}", text);
+            set_param!(number, overlay_text);
             param = true;
         }
         if !param {
             println!("\n{}", muon_rs::to_string(flow)?);
         }
         self.store();
-        Ok(())
+        Ok(number)
     }
-
-    /// Run sub-command
-    fn run_subcommand(&self, _matches: &ArgMatches) -> Result<(), Error> {
-        if self.flow.len() == 0 {
-            eprintln!("No flows defined");
-            return Ok(());
+    /// Convert config into a Vec of Flows
+    fn into_flows(self) -> Result<Vec<Flow>, Error> {
+        let mut flows = vec![];
+        for i in 0..self.flow.len() {
+            flows.push(self.flow(i)?);
         }
-        gstreamer::init().unwrap();
-
+        Ok(flows)
+    }
+    /// Create a flow
+    fn flow(&self, i: usize) -> Result<Flow, Error> {
         let acceleration = match &self.acceleration {
             Some(a) => a.parse::<Acceleration>()?,
             None => Acceleration::NONE,
         };
-        let mut flows = vec![];
-        for (i, flow_cfg) in self.flow.iter().enumerate() {
+        if let Some(flow_cfg) = self.flow.iter().skip(i).next() {
             let flow = FlowBuilder::new(i)
                 .with_acceleration(acceleration)
                 .with_source(flow_cfg.source())
@@ -422,23 +466,104 @@ impl Config {
                 .with_sink(flow_cfg.sink())
                 .with_feedback(Some(Box::new(Control {})))
                 .build()?;
-            flows.push(flow);
+            Ok(flow)
+        } else {
+            Err(Error::Other("Invalid flow number"))
         }
-        let mainloop = glib::MainLoop::new(None, false);
-        mainloop.run();
-        Ok(())
     }
 }
 
 /// Main function
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::builder().format_timestamp(None).init();
-    let config = Config::load();
+    let env = Env::default().default_filter_or("info");
+    env_logger::from_env(env).format_timestamp(None).init();
+    let mut config = Config::load();
     match create_app(&config).get_matches().subcommand() {
         ("config", Some(matches)) => config.config_subcommand(matches)?,
-        ("flow", Some(matches)) => config.flow_subcommand(matches)?,
-        ("run", Some(matches)) => config.run_subcommand(matches)?,
+        ("flow", Some(matches)) => {
+            config.flow_subcommand(matches)?;
+        },
+        ("run", Some(_matches)) => {
+            gstreamer::init().expect("gstreamer init failed!");
+            let control_port = config.control_port.unwrap_or(7001);
+            let flows = config.into_flows()?;
+            run_subcommand(control_port, flows)?
+        }
         _ => unreachable!(),
     }
     Ok(())
+}
+
+/// Run sub-command
+fn run_subcommand(control_port: u16, flows: Vec<Flow>) -> Result<(), Error> {
+    thread::spawn(move || command_thread(control_port, flows));
+    let mainloop = glib::MainLoop::new(None, false);
+    mainloop.run();
+    Ok(())
+}
+
+/// Thread to handle remote commands
+fn command_thread(port: u16, mut flows: Vec<Flow>) {
+    let address: IpAddr = "0.0.0.0".parse().unwrap();
+    let listener = TcpListener::bind((address, port)).unwrap();
+    loop {
+        let (socket, remote) = listener.accept().unwrap();
+        info!("command connection OPENED: {:?}", remote);
+        process_commands(socket, &mut flows);
+        info!("command connection CLOSED: {:?}", remote);
+    }
+}
+
+/// Process remote commands
+fn process_commands(socket: TcpStream, flows: &mut [Flow]) {
+    let mut buf = vec![];
+    let mut reader = BufReader::new(socket);
+    loop {
+        let n_bytes = reader.read_until(SEP_GROUP, &mut buf).unwrap();
+        if n_bytes == 0 {
+            break;
+        }
+        match buf.pop() {
+            Some(SEP_GROUP) => {
+                let cmd = std::str::from_utf8(&buf).unwrap();
+                process_command(cmd, flows);
+            }
+            Some(b) => debug!("Invalid command separator: 0x{:X}", b),
+            None => break,
+        }
+        buf.clear();
+    }
+}
+
+/// Process a remote command
+fn process_command(cmd: &str, flows: &mut [Flow]) {
+    // Maybe someday, use SEP_RECORD instead of \x1E
+    if cmd.starts_with("flow\x1E") {
+        let params = &cmd[5..];
+        let mut config = Config::load();
+        let number = config.flow_subcommand(&params).unwrap();
+        flows[number] = config.flow(number).unwrap();
+        return;
+    }
+    info!("Invalid command: {:?}", cmd);
+}
+
+impl<'a> Parameters<'a> for &'a str {
+    fn value(&'a self, key: &'a str) -> Option<&'a str> {
+        self.split(char::from(SEP_RECORD))
+            .find_map(|p| param_value(p, key))
+    }
+}
+
+/// Get the value of one parameter
+fn param_value<'a>(params: &'a str, key: &str) -> Option<&'a str> {
+    let mut p = params.split(char::from(SEP_UNIT));
+    if let Some(k) = p.next() {
+        if k == key {
+            if let (Some(value), None) = (p.next(), p.next()) {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
