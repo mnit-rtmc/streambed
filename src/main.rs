@@ -490,7 +490,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         ("run", Some(_matches)) => {
             gstreamer::init().expect("gstreamer init failed!");
-            let control_port = config.control_port.unwrap_or(7001);
+            let control_port = config.control_port.unwrap_or(8001);
             let flows = config.into_flows()?;
             run_subcommand(control_port, flows)?
         }
