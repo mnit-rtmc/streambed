@@ -157,16 +157,20 @@ impl FlowConfig {
     }
 }
 
-struct Control {}
+/// Control feedback
+struct Control {
+    /// Flow number
+    number: usize,
+}
 
 impl Feedback for Control {
     /// Flow playing
     fn playing(&self) {
-        info!("flow playing");
+        debug!("flow{} playing", self.number);
     }
     /// Flow stopped
     fn stopped(&self) {
-        info!("flow stopped");
+        debug!("flow{} stopped", self.number);
     }
 }
 
@@ -502,7 +506,7 @@ impl Config {
                 .with_source(flow_cfg.source())
                 .with_overlay_text(flow_cfg.overlay_text())
                 .with_sink(flow_cfg.sink())
-                .with_feedback(Some(Box::new(Control {})))
+                .with_feedback(Some(Box::new(Control { number: i })))
                 .build()?;
             Ok(flow)
         } else {
