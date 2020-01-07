@@ -1,3 +1,7 @@
+// lib.rs
+//
+// Copyright (C) 2019-2020  Minnesota Department of Transportation
+//
 mod error;
 mod flow;
 

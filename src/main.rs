@@ -1,6 +1,6 @@
 // main.rs
 //
-// Copyright (C) 2019  Minnesota Department of Transportation
+// Copyright (C) 2019-2020  Minnesota Department of Transportation
 //
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use env_logger::Env;

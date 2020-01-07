@@ -1,6 +1,6 @@
 // flow.rs
 //
-// Copyright (C) 2019  Minnesota Department of Transportation
+// Copyright (C) 2019-2020  Minnesota Department of Transportation
 //
 use crate::error::Error;
 use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
