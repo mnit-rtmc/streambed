@@ -333,14 +333,16 @@ impl Config {
     }
 
     /// Config sub-command
-    fn config_subcommand(mut self, matches: &ArgMatches) -> Result<(), Error> {
+    fn config_subcommand<'a, P: Parameters<'a>>(&mut self, params: &'a P)
+        -> Result<(), Error>
+    {
         let mut param = false;
-        if let Some(acceleration) = matches.value_of("acceleration") {
+        if let Some(acceleration) = params.value("acceleration") {
             self.acceleration = Some(acceleration.to_string());
             info!("Setting `acceleration` => {}", acceleration);
             param = true;
         }
-        if let Some(port) = matches.value_of("control-port") {
+        if let Some(port) = params.value("control-port") {
             self.control_port = if port.len() > 0 {
                 Some(port.parse()?)
             } else {
@@ -349,7 +351,7 @@ impl Config {
             info!("Setting `control-port` => {}", port);
             param = true;
         }
-        if let Some(flows) = matches.value_of("flows") {
+        if let Some(flows) = params.value("flows") {
             let flows: usize = flows.parse()?;
             self.flow.resize_with(flows, Default::default);
             info!("Setting `flows` => {}", flows);
@@ -520,7 +522,7 @@ fn command_thread(listener: TcpListener, mut flows: Vec<Flow>)
 }
 
 /// Process remote commands
-fn process_commands(socket: TcpStream, flows: &mut [Flow])
+fn process_commands(socket: TcpStream, flows: &mut Vec<Flow>)
     -> Result<(), Error>
 {
     let mut buf = vec![];
@@ -547,13 +549,20 @@ fn process_commands(socket: TcpStream, flows: &mut [Flow])
 }
 
 /// Process a remote command
-fn process_command(cmd: &str, flows: &mut [Flow]) -> Result<(), Error> {
+fn process_command(cmd: &str, flows: &mut Vec<Flow>) -> Result<(), Error> {
     // Maybe someday, use SEP_RECORD instead of \x1E
     if cmd.starts_with("flow\x1E") {
         let params = &cmd[5..];
         let mut config = Config::load();
         let number = config.flow_subcommand(&params)?;
         flows[number] = config.flow(number)?;
+        return Ok(());
+    } else if cmd.starts_with("config\x1E") {
+        let params = &cmd[7..];
+        let mut config = Config::load();
+        config.config_subcommand(&params)?;
+        flows.clear();
+        flows.extend(config.into_flows()?);
         return Ok(());
     }
     debug!("Invalid command: {:?}", cmd);
