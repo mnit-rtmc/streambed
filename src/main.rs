@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
 use streambed::{
-    Acceleration, Encoding, Error, Feedback, Flow, Sink, Source, FlowBuilder
+    Acceleration, Encoding, Error, Feedback, Flow, FlowBuilder, Sink, Source,
 };
 
 /// Crate version
@@ -23,8 +23,8 @@ const VERSION: &'static str = std::env!("CARGO_PKG_VERSION");
 const CONFIG_FILE: &'static str = "streambed.muon";
 
 /// Possible video encodings
-const ENCODINGS: &[&'static str] = &["", "MJPEG", "MPEG2", "MPEG4", "H264",
-    "H265", "VP8", "VP9"];
+const ENCODINGS: &[&'static str] =
+    &["", "MJPEG", "MPEG2", "MPEG4", "H264", "H265", "VP8", "VP9"];
 
 /// ASCII group separator
 const SEP_GROUP: u8 = b'\x1D';
@@ -64,7 +64,9 @@ struct Location(String);
 
 impl Default for Location {
     fn default() -> Self {
-        Location { 0: "test".to_string() }
+        Location {
+            0: "test".to_string(),
+        }
     }
 }
 
@@ -98,7 +100,7 @@ impl FlowConfig {
             Some(e) => match e.parse() {
                 Ok(e) => e,
                 Err(_) => Encoding::default(),
-            }
+            },
             None => Encoding::default(),
         }
     }
@@ -137,23 +139,25 @@ impl FlowConfig {
             Some(e) => match e.parse() {
                 Ok(e) => e,
                 Err(_) => self.source_encoding(),
-            }
+            },
             None => self.source_encoding(),
         }
     }
     /// Get sink
     fn sink(&self) -> Sink {
         match (&self.address, &self.port) {
-            (Some(address), Some(port)) => {
-                Sink::RTP(String::from(address), (*port).into(),
-                    self.sink_encoding(), true)
-            }
+            (Some(address), Some(port)) => Sink::RTP(
+                String::from(address),
+                (*port).into(),
+                self.sink_encoding(),
+                true,
+            ),
             _ => Sink::FAKE,
         }
     }
 }
 
-struct Control { }
+struct Control {}
 
 impl Feedback for Control {
     /// Flow playing
@@ -197,98 +201,122 @@ fn create_app(config: &Config) -> App<'static, 'static> {
         .setting(AppSettings::GlobalVersion)
         .about("Video streaming system")
         .setting(AppSettings::ArgRequiredElseHelp)
-        .subcommand(SubCommand::with_name("config")
-            .about("Configure global settings")
-            .display_order(1)
-            .arg(Arg::with_name("acceleration")
-                .short("a")
-                .long("acceleration")
-                .help("acceleration method")
-                .value_name("method")
-                .possible_values(&["NONE", "VAAPI", "OMX"]))
-            .arg(Arg::with_name("control-port")
-                .short("c")
-                .long("control-port")
-                .help("TCP control port")
-                .takes_value(true)
-                .validator(is_parseable::<u16>))
-            .arg(Arg::with_name("flows")
-                .short("f")
-                .long("flows")
-                .help("total number of flows")
-                .value_name("total")
-                .validator(is_parseable::<u8>)))
-        .subcommand(SubCommand::with_name("flow")
-            .about("Configure a video flow")
-            .display_order(2)
-            .arg(Arg::with_name("number")
-                .index(1)
-                .required(true)
-                .help("flow index number")
-                .takes_value(true)
-                .validator(move |v| check_flows(flows, v)))
-            .arg(Arg::with_name("location")
-                .short("u")
-                .long("location")
-                .help("source location or URI")
-                .value_name("uri")
-                .empty_values(false))
-            .arg(Arg::with_name("source-encoding")
-                .short("e")
-                .long("source-encoding")
-                .help("source encoding")
-                .value_name("encoding")
-                .possible_values(ENCODINGS))
-            .arg(Arg::with_name("timeout")
-                .short("t")
-                .long("timeout")
-                .help("source timeout in seconds")
-                .value_name("sec")
-                .validator(is_parseable::<u16>))
-            .arg(Arg::with_name("latency")
-                .short("l")
-                .long("latency")
-                .help("buffering latency in milliseconds")
-                .value_name("ms")
-                .validator(is_parseable::<u32>))
-            .arg(Arg::with_name("address")
-                .short("a")
-                .long("address")
-                .help("sink UDP address (multicast supported)")
-                .value_name("addr"))
-            .arg(Arg::with_name("port")
-                .short("p")
-                .long("port")
-                .help("sink UDP port")
-                .takes_value(true)
-                .validator(is_parseable::<u16>))
-            .arg(Arg::with_name("sink-encoding")
-                .short("n")
-                .long("sink-encoding")
-                .help("sink encoding")
-                .value_name("encoding")
-                .possible_values(ENCODINGS))
-            .arg(Arg::with_name("overlay-text")
-                .short("x")
-                .long("overlay-text")
-                .help("overlay text (requires transcoding)")
-                .takes_value(true)))
-        .subcommand(SubCommand::with_name("run")
-            .about("Run streambed video system"))
+        .subcommand(
+            SubCommand::with_name("config")
+                .about("Configure global settings")
+                .display_order(1)
+                .arg(
+                    Arg::with_name("acceleration")
+                        .short("a")
+                        .long("acceleration")
+                        .help("acceleration method")
+                        .value_name("method")
+                        .possible_values(&["NONE", "VAAPI", "OMX"]),
+                )
+                .arg(
+                    Arg::with_name("control-port")
+                        .short("c")
+                        .long("control-port")
+                        .help("TCP control port")
+                        .takes_value(true)
+                        .validator(is_parseable::<u16>),
+                )
+                .arg(
+                    Arg::with_name("flows")
+                        .short("f")
+                        .long("flows")
+                        .help("total number of flows")
+                        .value_name("total")
+                        .validator(is_parseable::<u8>),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("flow")
+                .about("Configure a video flow")
+                .display_order(2)
+                .arg(
+                    Arg::with_name("number")
+                        .index(1)
+                        .required(true)
+                        .help("flow index number")
+                        .takes_value(true)
+                        .validator(move |v| check_flows(flows, v)),
+                )
+                .arg(
+                    Arg::with_name("location")
+                        .short("u")
+                        .long("location")
+                        .help("source location or URI")
+                        .value_name("uri")
+                        .empty_values(false),
+                )
+                .arg(
+                    Arg::with_name("source-encoding")
+                        .short("e")
+                        .long("source-encoding")
+                        .help("source encoding")
+                        .value_name("encoding")
+                        .possible_values(ENCODINGS),
+                )
+                .arg(
+                    Arg::with_name("timeout")
+                        .short("t")
+                        .long("timeout")
+                        .help("source timeout in seconds")
+                        .value_name("sec")
+                        .validator(is_parseable::<u16>),
+                )
+                .arg(
+                    Arg::with_name("latency")
+                        .short("l")
+                        .long("latency")
+                        .help("buffering latency in milliseconds")
+                        .value_name("ms")
+                        .validator(is_parseable::<u32>),
+                )
+                .arg(
+                    Arg::with_name("address")
+                        .short("a")
+                        .long("address")
+                        .help("sink UDP address (multicast supported)")
+                        .value_name("addr"),
+                )
+                .arg(
+                    Arg::with_name("port")
+                        .short("p")
+                        .long("port")
+                        .help("sink UDP port")
+                        .takes_value(true)
+                        .validator(is_parseable::<u16>),
+                )
+                .arg(
+                    Arg::with_name("sink-encoding")
+                        .short("n")
+                        .long("sink-encoding")
+                        .help("sink encoding")
+                        .value_name("encoding")
+                        .possible_values(ENCODINGS),
+                )
+                .arg(
+                    Arg::with_name("overlay-text")
+                        .short("x")
+                        .long("overlay-text")
+                        .help("overlay text (requires transcoding)")
+                        .takes_value(true),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("run").about("Run streambed video system"),
+        )
 }
 
 macro_rules! set_param {
     ($num:expr, $param:expr) => {
         info!(
-            concat!(
-                "Setting flow{} `",
-                stringify!($param),
-                "` => {}",
-            ),
-            $num,
-            $param,
+            concat!("Setting flow{} `", stringify!($param), "` => {}",),
+            $num, $param,
         );
-    }
+    };
 }
 
 impl Config {
@@ -309,7 +337,7 @@ impl Config {
                     error!("{:?} parsing {:?}", e, path);
                     panic!("Invalid configuration");
                 }
-            }
+            },
             Err(e) => {
                 error!("{:?} reading {:?}", e.kind(), path);
                 if e.kind() != ErrorKind::NotFound {
@@ -328,17 +356,19 @@ impl Config {
             }
         }
         match File::create(&path) {
-            Ok(writer) => if let Err(_e) = muon_rs::to_writer(writer, self) {
-                error!("storing {:?}", path);
+            Ok(writer) => {
+                if let Err(_e) = muon_rs::to_writer(writer, self) {
+                    error!("storing {:?}", path);
+                }
             }
             Err(e) => error!("{:?} writing {:?}", e.kind(), path),
         }
     }
 
     /// Config sub-command
-    fn config_subcommand<'a, P: Parameters<'a>>(&mut self, params: &'a P)
-        -> Result<(), Error>
-    {
+    fn config_subcommand<'a, P: Parameters<'a>>(
+        &mut self, params: &'a P,
+    ) -> Result<(), Error> {
         let mut param = false;
         if let Some(acceleration) = params.value("acceleration") {
             self.acceleration = Some(acceleration.to_string());
@@ -368,10 +398,11 @@ impl Config {
     }
 
     /// Flow sub-command
-    fn flow_subcommand<'a, P: Parameters<'a>>(&mut self, params: &'a P)
-        -> Result<usize, Error>
-    {
-        let number = params.value("number")
+    fn flow_subcommand<'a, P: Parameters<'a>>(
+        &mut self, params: &'a P,
+    ) -> Result<usize, Error> {
+        let number = params
+            .value("number")
             .ok_or(Error::Other("Missing flow number"))?;
         let number: usize = number.parse()?;
         if number >= self.flow.len() {
@@ -380,7 +411,9 @@ impl Config {
         let mut flow = &mut self.flow[number];
         let mut param = false;
         if let Some(location) = params.value("location") {
-            flow.location = Location { 0: String::from(location) };
+            flow.location = Location {
+                0: String::from(location),
+            };
             set_param!(number, location);
             param = true;
         }
@@ -487,7 +520,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("config", Some(matches)) => config.config_subcommand(matches)?,
         ("flow", Some(matches)) => {
             config.flow_subcommand(matches)?;
-        },
+        }
         ("run", Some(_matches)) => {
             gstreamer::init().expect("gstreamer init failed!");
             let control_port = config.control_port.unwrap_or(8001);
@@ -510,9 +543,9 @@ fn run_subcommand(control_port: u16, flows: Vec<Flow>) -> Result<(), Error> {
 }
 
 /// Thread to handle remote commands
-fn command_thread(listener: TcpListener, mut flows: Vec<Flow>)
-    -> Result<(), Error>
-{
+fn command_thread(
+    listener: TcpListener, mut flows: Vec<Flow>,
+) -> Result<(), Error> {
     loop {
         let (socket, remote) = listener.accept()?;
         info!("command connection OPENED: {:?}", remote);
@@ -525,9 +558,9 @@ fn command_thread(listener: TcpListener, mut flows: Vec<Flow>)
 }
 
 /// Process remote commands
-fn process_commands(socket: TcpStream, flows: &mut Vec<Flow>)
-    -> Result<(), Error>
-{
+fn process_commands(
+    socket: TcpStream, flows: &mut Vec<Flow>,
+) -> Result<(), Error> {
     let mut buf = vec![];
     let mut reader = BufReader::new(socket);
     loop {

@@ -5,9 +5,9 @@
 use crate::error::Error;
 use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
 use gstreamer::{
-    Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual, ElementFactory,
-    GstBinExt, GstObjectExt, GObjectExtManualGst, Message, MessageView, Pad,
-    PadExt, PadExtManual, Pipeline, Sample, State, Structure,
+    Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual,
+    ElementFactory, GObjectExtManualGst, GstBinExt, GstObjectExt, Message,
+    MessageView, Pad, PadExt, PadExtManual, Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
 use log::{debug, error, info, trace, warn};
@@ -180,9 +180,9 @@ pub struct Flow {
 }
 
 /// Make a pipeline element
-fn make_element(factory_name: &'static str, name: Option<&str>)
-    -> Result<Element, Error>
-{
+fn make_element(
+    factory_name: &'static str, name: Option<&str>,
+) -> Result<Element, Error> {
     ElementFactory::make(factory_name, name).map_err(|_| {
         error!("make_element: {}", factory_name);
         Error::MissingElement(factory_name)
@@ -190,9 +190,9 @@ fn make_element(factory_name: &'static str, name: Option<&str>)
 }
 
 /// Set a property of an element
-fn set_property(elem: &Element, name: &'static str, value: &dyn ToValue)
-    -> Result<(), Error>
-{
+fn set_property(
+    elem: &Element, name: &'static str, value: &dyn ToValue,
+) -> Result<(), Error> {
     match elem.set_property(name, value) {
         Ok(()) => Ok(()),
         Err(_) => Err(Error::InvalidProperty(name)),
@@ -309,7 +309,6 @@ impl Default for Source {
 }
 
 impl Source {
-
     /// Use the specified location
     pub fn with_location(mut self, location: &str) -> Self {
         self.location = location.to_string();
@@ -414,16 +413,16 @@ impl TryFrom<&str> for MatrixCrop {
             let mut crop = p[0].chars();
             let x = MatrixCrop::position(crop.next().unwrap_or_default())?;
             let y = MatrixCrop::position(crop.next().unwrap_or_default())?;
-            let width = MatrixCrop::position(crop.next().unwrap_or_default())?
-                + 1;
-            let height = MatrixCrop::position(crop.next().unwrap_or_default())?
-                + 1;
+            let width =
+                MatrixCrop::position(crop.next().unwrap_or_default())? + 1;
+            let height =
+                MatrixCrop::position(crop.next().unwrap_or_default())? + 1;
             if x < width && y < height {
                 let hgap: u32 = p[1].parse()?;
                 let vgap: u32 = p[2].parse()?;
                 // Don't allow more than 50% gap
-                if hgap <= MatrixCrop::PERCENT / 2 &&
-                   vgap <= MatrixCrop::PERCENT / 2
+                if hgap <= MatrixCrop::PERCENT / 2
+                    && vgap <= MatrixCrop::PERCENT / 2
                 {
                     return Ok(MatrixCrop {
                         aspect: AspectRatio::default(),
@@ -432,7 +431,7 @@ impl TryFrom<&str> for MatrixCrop {
                         width,
                         height,
                         hgap,
-                        vgap
+                        vgap,
                     });
                 }
             }
@@ -448,7 +447,7 @@ impl MatrixCrop {
     /// Get a matrix position from a crop code
     fn position(c: char) -> Result<u8, Error> {
         match c {
-            'A' ..= 'H' => Ok(c as u8 - b'A'),
+            'A'..='H' => Ok(c as u8 - b'A'),
             _ => Err(Error::InvalidCrop()),
         }
     }
@@ -552,7 +551,6 @@ impl fmt::Display for FlowBuilder {
 }
 
 impl FlowBuilder {
-
     /// Create a new flow builder
     pub fn new(idx: usize) -> Self {
         FlowBuilder {
@@ -586,9 +584,9 @@ impl FlowBuilder {
     }
 
     /// Use the specified flow feedback
-    pub fn with_feedback(mut self, feedback: Option<Box<dyn Feedback>>)
-        -> Self
-    {
+    pub fn with_feedback(
+        mut self, feedback: Option<Box<dyn Feedback>>,
+    ) -> Self {
         self.feedback = feedback;
         self
     }
@@ -675,10 +673,10 @@ impl FlowBuilder {
 
     /// Check if RTP can pass unchanged from source to sink
     fn is_rtp_passthru(&self) -> bool {
-        self.source.is_rtp_or_rtsp() &&
-        self.sink.is_rtp() &&
-        !self.sink.insert_config() &&
-        !self.needs_transcode()
+        self.source.is_rtp_or_rtsp()
+            && self.sink.is_rtp()
+            && !self.sink.insert_config()
+            && !self.needs_transcode()
     }
 
     /// Check if pipeline needs transcoding
@@ -861,8 +859,7 @@ impl FlowBuilder {
                 Ok(Some(num)) => Some((num == STREAM_NUM_VIDEO).to_value()),
                 _ => None,
             }
-        })
-        {
+        }) {
             Ok(_) => self.add_element(src),
             Err(_) => Err(Error::ConnectSignal("select-stream")),
         }
@@ -975,8 +972,10 @@ impl FlowBuilder {
 
     /// Create a sink element
     fn create_sink(&self) -> Result<Element, Error> {
-        let sink = make_element(self.sink.factory_name(self.acceleration),
-            Some("sink"))?;
+        let sink = make_element(
+            self.sink.factory_name(self.acceleration),
+            Some("sink"),
+        )?;
         match &self.sink {
             Sink::RTP(addr, port, _, _) => {
                 set_property(&sink, "host", addr)?;
@@ -984,13 +983,16 @@ impl FlowBuilder {
                 set_property(&sink, "ttl-mc", &15)?;
             }
             Sink::WINDOW(crop) => {
-                set_property(&sink, "force-aspect-ratio",
-                    &crop.aspect.as_bool())?;
+                set_property(
+                    &sink,
+                    "force-aspect-ratio",
+                    &crop.aspect.as_bool(),
+                )?;
                 if let Some(handle) = self.handle {
                     match sink.clone().dynamic_cast::<VideoOverlay>() {
                         Ok(overlay) => unsafe {
                             overlay.set_window_handle(handle);
-                        }
+                        },
                         Err(_) => error!("invalid video overlay"),
                     }
                 }
@@ -1135,17 +1137,13 @@ impl FlowBuilder {
     fn configure_text(&self, pipeline: &Pipeline) {
         if let Some(txt) = pipeline.get_by_name("txt") {
             match txt.get_static_pad("src") {
-                Some(src_pad) => {
-                    match src_pad.get_current_caps() {
-                        Some(caps) => {
-                            match self.config_txt_props(txt, caps) {
-                                Err(_) => error!("txt props -- {}", self),
-                                _ => (),
-                            }
-                        }
-                        None => error!("no caps on txt src pad -- {}", self),
-                    }
-                }
+                Some(src_pad) => match src_pad.get_current_caps() {
+                    Some(caps) => match self.config_txt_props(txt, caps) {
+                        Err(_) => error!("txt props -- {}", self),
+                        _ => (),
+                    },
+                    None => error!("no caps on txt src pad -- {}", self),
+                },
                 None => error!("no txt src pad -- {}", self),
             }
         }
@@ -1171,26 +1169,24 @@ impl FlowBuilder {
     fn configure_vbox(&self, pipeline: &Pipeline, crop: MatrixCrop) {
         if let Some(vbx) = pipeline.get_by_name("vbox") {
             match vbx.get_static_pad("src") {
-                Some(src_pad) => {
-                    match src_pad.get_current_caps() {
-                        Some(caps) => {
-                            match self.config_vbox_props(vbx, caps, crop) {
-                                Err(_) => error!("vbox props -- {}", self),
-                                _ => (),
-                            }
+                Some(src_pad) => match src_pad.get_current_caps() {
+                    Some(caps) => {
+                        match self.config_vbox_props(vbx, caps, crop) {
+                            Err(_) => error!("vbox props -- {}", self),
+                            _ => (),
                         }
-                        None => error!("no caps on vbox src pad -- {}", self),
                     }
-                }
+                    None => error!("no caps on vbox src pad -- {}", self),
+                },
                 None => error!("no vbox src pad -- {}", self),
             }
         }
     }
 
     /// Configure videobox properties
-    fn config_vbox_props(&self, vbx: Element, caps: Caps, crop: MatrixCrop)
-        -> Result<(), Error>
-    {
+    fn config_vbox_props(
+        &self, vbx: Element, caps: Caps, crop: MatrixCrop,
+    ) -> Result<(), Error> {
         for s in caps.iter() {
             match (s.get("width"), s.get("height")) {
                 (Ok(Some(width)), Ok(Some(height))) => {
@@ -1278,27 +1274,23 @@ impl FlowCheck {
     /// Check sink to make sure that last-sample is updating.
     fn is_stuck(&mut self, sink: &Element) -> bool {
         match sink.get_property("last-sample") {
-            Ok(sample) => {
-                match sample.get::<Sample>() {
-                    Ok(Some(sample)) => {
-                        match sample.get_buffer() {
-                            Some(buffer) => {
-                                let pts = buffer.get_pts();
-                                trace!("PTS: {}", pts);
-                                let stuck = pts == self.last_pts;
-                                if stuck {
-                                    info!("PTS stuck at {}; posting EOS", pts);
-                                } else {
-                                    self.last_pts = pts;
-                                }
-                                return stuck;
-                            }
-                            None => error!("sample buffer missing"),
+            Ok(sample) => match sample.get::<Sample>() {
+                Ok(Some(sample)) => match sample.get_buffer() {
+                    Some(buffer) => {
+                        let pts = buffer.get_pts();
+                        trace!("PTS: {}", pts);
+                        let stuck = pts == self.last_pts;
+                        if stuck {
+                            info!("PTS stuck at {}; posting EOS", pts);
+                        } else {
+                            self.last_pts = pts;
                         }
+                        return stuck;
                     }
-                    _ => debug!("last-sample missing: {}", self.count),
-                }
-            }
+                    None => error!("sample buffer missing"),
+                },
+                _ => debug!("last-sample missing: {}", self.count),
+            },
             Err(_) => error!("get last-sample failed"),
         };
         self.count > PTS_CHECK_TRIES
@@ -1313,23 +1305,18 @@ impl Drop for Flow {
 }
 
 impl Flow {
-
     /// Get packet statistics
     pub fn packet_stats(&mut self) -> Option<(u64, u64, u64)> {
         let pushed = self.pushed;
         let lost = self.lost;
         let late = self.late;
         let update = self.update_stats();
-        if update &&
-           self.pushed >= pushed &&
-           self.lost >= lost &&
-           self.late >= late
+        if update
+            && self.pushed >= pushed
+            && self.lost >= lost
+            && self.late >= late
         {
-            Some((
-                 self.pushed - pushed,
-                 self.lost - lost,
-                 self.late - late,
-            ))
+            Some((self.pushed - pushed, self.lost - lost, self.late - late))
         } else {
             None
         }
@@ -1346,25 +1333,22 @@ impl Flow {
     /// Get statistics from jitter buffer element
     fn jitter_stats(&mut self, jitter: Element) -> bool {
         match jitter.get_property("stats") {
-            Ok(stats) => {
-                match stats.get::<Structure>() {
-                    Ok(Some(stats)) => {
-                        let pushed = stats.get::<u64>("num-pushed");
-                        let lost = stats.get::<u64>("num-lost");
-                        let late = stats.get::<u64>("num-late");
-                        match (pushed, lost, late) {
-                            (Ok(Some(pushed)), Ok(Some(lost)), Ok(Some(late))) =>
-                            {
-                                self.pushed = pushed;
-                                self.lost = lost;
-                                self.late = late;
-                            }
-                            _ => warn!("stats empty"),
+            Ok(stats) => match stats.get::<Structure>() {
+                Ok(Some(stats)) => {
+                    let pushed = stats.get::<u64>("num-pushed");
+                    let lost = stats.get::<u64>("num-lost");
+                    let late = stats.get::<u64>("num-late");
+                    match (pushed, lost, late) {
+                        (Ok(Some(pushed)), Ok(Some(lost)), Ok(Some(late))) => {
+                            self.pushed = pushed;
+                            self.lost = lost;
+                            self.late = late;
                         }
+                        _ => warn!("stats empty"),
                     }
-                    _ => warn!("missing stats"),
                 }
-            }
+                _ => warn!("missing stats"),
+            },
             Err(_) => warn!("failed to get jitter stats"),
         }
         false
