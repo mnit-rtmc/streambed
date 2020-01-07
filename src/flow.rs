@@ -30,6 +30,9 @@ const DEFAULT_TIMEOUT_SEC: u16 = 2;
 /// Default buffering latency (ms)
 const DEFAULT_LATENCY_MS: u32 = 100;
 
+/// Time-To-Live for multicast packets
+const TTL_MULTICAST: i32 = 15;
+
 /// Number of times to check PTS before giving up
 const PTS_CHECK_TRIES: usize = 5;
 
@@ -980,7 +983,7 @@ impl FlowBuilder {
             Sink::RTP(addr, port, _, _) => {
                 set_property(&sink, "host", addr)?;
                 set_property(&sink, "port", port)?;
-                set_property(&sink, "ttl-mc", &15)?;
+                set_property(&sink, "ttl-mc", &TTL_MULTICAST)?;
             }
             Sink::WINDOW(crop) => {
                 set_property(
