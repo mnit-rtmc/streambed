@@ -161,9 +161,8 @@ impl Feedback for Control {
         info!("flow playing");
     }
     /// Flow stopped
-    fn stopped(&self) -> bool {
+    fn stopped(&self) {
         info!("flow stopped");
-        true
     }
 }
 

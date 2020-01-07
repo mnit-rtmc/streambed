@@ -128,7 +128,7 @@ pub trait Feedback: Send {
     /// Flow playing
     fn playing(&self);
     /// Flow stopped
-    fn stopped(&self) -> bool;
+    fn stopped(&self);
 }
 
 /// Hardware video acceleration
@@ -605,6 +605,7 @@ impl FlowBuilder {
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
+        self.stopped();
         let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
         if let Err(_) = bus.add_watch(move |_bus, m| self.handle_message(m)) {
@@ -1073,6 +1074,7 @@ impl FlowBuilder {
                             self.configure_playing();
                         }
                     }
+                    (State::Null, _) => self.stopped(),
                     _ => (),
                 }
             }
@@ -1087,7 +1089,7 @@ impl FlowBuilder {
             MessageView::Element(elem) => {
                 if let Some(obj) = elem.get_src() {
                     if obj.get_name() == "GstUDPSrcTimeout" {
-                        error!("udpsrc timeout -- {}", self);
+                        warn!("udpsrc timeout -- {}", self);
                         self.stop();
                     }
                 }
@@ -1097,23 +1099,19 @@ impl FlowBuilder {
         glib::Continue(true)
     }
 
-    /// Play the flow
-    fn play(&self) {
-        if let Some(pipeline) = self.pipeline.upgrade() {
-            pipeline.set_state(State::Playing).unwrap();
-        }
-    }
-
     /// Stop the flow
     fn stop(&self) {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.set_state(State::Null).unwrap();
-            info!("stopped -- {}", self);
         }
-        if let Some(feedback) = &self.feedback {
-            if feedback.stopped() {
-                self.play();
-            }
+        self.stopped();
+    }
+
+    /// Provide feedback for stopped state
+    fn stopped(&self) {
+        info!("stopped -- {}", self);
+        if let Some(fb) = &self.feedback {
+            fb.stopped();
         }
     }
 
@@ -1234,27 +1232,45 @@ impl FlowCheck {
         self.count += 1;
         match self.pipeline.upgrade() {
             Some(pipeline) => {
-                match pipeline.get_by_name("sink") {
-                    Some(sink) => {
-                        if self.is_stuck(&sink) {
-                            let msg = Message::new_eos()
-                                .src(Some(&sink))
-                                .build();
-                            let bus = pipeline.get_bus().unwrap();
-                            if let Err(_) = bus.post(&msg) {
-                                error!("pts_check post failed");
-                            }
-                        }
-                        glib::Continue(true)
-                    }
-                    None => {
-                        warn!("pts_check sink gone");
-                        glib::Continue(false)
-                    }
+                if self.check_stopped(&pipeline) {
+                    self.count = 0;
+                    return glib::Continue(true);
                 }
+                self.check_sink(&pipeline)
             }
             None => {
                 debug!("pts_check pipeline gone");
+                glib::Continue(false)
+            }
+        }
+    }
+    /// Check if pipeline is stopped, and restart if necessary
+    fn check_stopped(&self, pipeline: &Pipeline) -> bool {
+        match pipeline.get_state(ClockTime::from_seconds(0)) {
+            (_, State::Null, _) => {
+                debug!("flow restarting");
+                pipeline.set_state(State::Playing).unwrap();
+                true
+            }
+            _ => false,
+        }
+    }
+    /// Check sink in a pipeline
+    fn check_sink(&mut self, pipeline: &Pipeline) -> glib::Continue {
+        match pipeline.get_by_name("sink") {
+            Some(sink) => {
+                if self.is_stuck(&sink) {
+                    let msg = Message::new_eos().src(Some(&sink)).build();
+                    let bus = pipeline.get_bus().unwrap();
+                    if let Err(_) = bus.post(&msg) {
+                        error!("check_sink post failed");
+                        return glib::Continue(false);
+                    }
+                }
+                glib::Continue(true)
+            }
+            None => {
+                warn!("check_sink sink gone");
                 glib::Continue(false)
             }
         }
@@ -1291,8 +1307,8 @@ impl FlowCheck {
 
 impl Drop for Flow {
     fn drop(&mut self) {
-        self.stop();
         self.bus.remove_watch().unwrap();
+        self.pipeline.set_state(State::Null).unwrap();
     }
 }
 
