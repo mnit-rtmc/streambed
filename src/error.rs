@@ -4,7 +4,9 @@
 //
 use muon_rs::Error as MuonError;
 use std::fmt;
+use std::net::AddrParseError;
 use std::num::{ParseIntError, TryFromIntError};
+use std::str::Utf8Error;
 
 /// Streambed errors
 #[derive(Debug)]
@@ -19,10 +21,14 @@ pub enum Error {
     PipelineAdd(),
     /// Invalid MatrixCrop definition
     InvalidCrop(),
+    /// Error parsing IP address
+    ParseAddr(AddrParseError),
     /// Error parsing integer
     ParseInt(ParseIntError),
     /// Error converting from integer
     TryFromInt(TryFromIntError),
+    /// Error converting UTF-8
+    InvalidUtf8(Utf8Error),
     /// I/O error
     Io(std::io::Error),
     /// Muon error
@@ -39,8 +45,10 @@ impl fmt::Display for Error {
             Error::ConnectSignal(e) => write!(f, "connect signal: {}", e),
             Error::PipelineAdd() => write!(f, "pipeline add"),
             Error::InvalidCrop() => write!(f, "invalid crop"),
+            Error::ParseAddr(e) => write!(f, "parse {:?}", e),
             Error::ParseInt(e) => write!(f, "parse {:?}", e),
             Error::TryFromInt(e) => write!(f, "try_from {:?}", e),
+            Error::InvalidUtf8(e) => write!(f, "utf-8 {:?}", e),
             Error::Io(e) => write!(f, "IO {:?}", e),
             Error::Muon(e) => write!(f, "muon {:?}", e),
             Error::Other(e) => write!(f, "{:?}", e),
@@ -51,10 +59,18 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Error::ParseAddr(e) => Some(e),
             Error::ParseInt(e) => Some(e),
             Error::TryFromInt(e) => Some(e),
+            Error::InvalidUtf8(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+impl From<AddrParseError> for Error {
+    fn from(e: AddrParseError) -> Self {
+        Error::ParseAddr(e)
     }
 }
 
@@ -67,6 +83,12 @@ impl From<ParseIntError> for Error {
 impl From<TryFromIntError> for Error {
     fn from(e: TryFromIntError) -> Self {
         Error::TryFromInt(e)
+    }
+}
+
+impl From<Utf8Error> for Error {
+    fn from(e: Utf8Error) -> Self {
+        Error::InvalidUtf8(e)
     }
 }
 

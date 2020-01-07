@@ -4,7 +4,7 @@
 //
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use env_logger::Env;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fs::{create_dir_all, File};
 use std::io::{BufRead, BufReader};
@@ -313,7 +313,7 @@ impl Config {
             }
             Err(e) => {
                 error!("{:?} reading {:?}", e.kind(), path);
-                Self::default()
+                panic!("Invalid configuration");
             }
         }
     }
@@ -367,7 +367,8 @@ impl Config {
     fn flow_subcommand<'a, P: Parameters<'a>>(&mut self, params: &'a P)
         -> Result<usize, Error>
     {
-        let number = params.value("number").unwrap();
+        let number = params.value("number")
+            .ok_or(Error::Other("Missing flow number"))?;
         let number: usize = number.parse()?;
         if number >= self.flow.len() {
             return Err(Error::Other("Invalid flow number"));
@@ -496,56 +497,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Run sub-command
 fn run_subcommand(control_port: u16, flows: Vec<Flow>) -> Result<(), Error> {
-    thread::spawn(move || command_thread(control_port, flows));
+    let address: IpAddr = "::".parse()?;
+    let listener = TcpListener::bind((address, control_port))?;
+    thread::spawn(move || command_thread(listener, flows));
     let mainloop = glib::MainLoop::new(None, false);
     mainloop.run();
     Ok(())
 }
 
 /// Thread to handle remote commands
-fn command_thread(port: u16, mut flows: Vec<Flow>) {
-    let address: IpAddr = "0.0.0.0".parse().unwrap();
-    let listener = TcpListener::bind((address, port)).unwrap();
+fn command_thread(listener: TcpListener, mut flows: Vec<Flow>)
+    -> Result<(), Error>
+{
     loop {
-        let (socket, remote) = listener.accept().unwrap();
+        let (socket, remote) = listener.accept()?;
         info!("command connection OPENED: {:?}", remote);
-        process_commands(socket, &mut flows);
+        match process_commands(socket, &mut flows) {
+            Err(e) => warn!("{:?} processing command", e),
+            _ => (),
+        }
         info!("command connection CLOSED: {:?}", remote);
     }
 }
 
 /// Process remote commands
-fn process_commands(socket: TcpStream, flows: &mut [Flow]) {
+fn process_commands(socket: TcpStream, flows: &mut [Flow])
+    -> Result<(), Error>
+{
     let mut buf = vec![];
     let mut reader = BufReader::new(socket);
     loop {
-        let n_bytes = reader.read_until(SEP_GROUP, &mut buf).unwrap();
+        let n_bytes = reader.read_until(SEP_GROUP, &mut buf)?;
         if n_bytes == 0 {
             break;
         }
         match buf.pop() {
             Some(SEP_GROUP) => {
-                let cmd = std::str::from_utf8(&buf).unwrap();
-                process_command(cmd, flows);
+                let cmd = std::str::from_utf8(&buf)?;
+                process_command(cmd, flows)?;
             }
-            Some(b) => debug!("Invalid command separator: 0x{:X}", b),
+            Some(b) => {
+                debug!("Invalid command separator: 0x{:X}", b);
+                return Err(Error::Other("Invalid command separator"));
+            }
             None => break,
         }
         buf.clear();
     }
+    Ok(())
 }
 
 /// Process a remote command
-fn process_command(cmd: &str, flows: &mut [Flow]) {
+fn process_command(cmd: &str, flows: &mut [Flow]) -> Result<(), Error> {
     // Maybe someday, use SEP_RECORD instead of \x1E
     if cmd.starts_with("flow\x1E") {
         let params = &cmd[5..];
         let mut config = Config::load();
-        let number = config.flow_subcommand(&params).unwrap();
-        flows[number] = config.flow(number).unwrap();
-        return;
+        let number = config.flow_subcommand(&params)?;
+        flows[number] = config.flow(number)?;
+        return Ok(());
     }
-    info!("Invalid command: {:?}", cmd);
+    debug!("Invalid command: {:?}", cmd);
+    Err(Error::Other("Invalid command"))
 }
 
 impl<'a> Parameters<'a> for &'a str {
