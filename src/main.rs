@@ -7,7 +7,7 @@ use env_logger::Env;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fs::{create_dir_all, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -312,7 +312,10 @@ impl Config {
             }
             Err(e) => {
                 error!("{:?} reading {:?}", e.kind(), path);
-                panic!("Invalid configuration");
+                if e.kind() != ErrorKind::NotFound {
+                    panic!("Invalid configuration");
+                }
+                Self::default()
             }
         }
     }
