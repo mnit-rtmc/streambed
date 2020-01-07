@@ -33,11 +33,17 @@ const DEFAULT_LATENCY_MS: u32 = 100;
 /// Time-To-Live for multicast packets
 const TTL_MULTICAST: i32 = 15;
 
+/// Clock rate for RTP video packets
+const RTP_VIDEO_CLOCK_RATE: i32 = 90_000;
+
 /// Number of times to check PTS before giving up
 const PTS_CHECK_TRIES: usize = 5;
 
 /// Font size (pt), using default height
 const FONT_SZ: u32 = 14;
+
+/// Text overlay color (ARGB; yellowish white)
+const OVERLAY_COLOR: u32 = 0xFF_FF_FF_E0;
 
 /// Default height (px)
 const DEFAULT_HEIGHT: u32 = 240;
@@ -834,7 +840,7 @@ impl FlowBuilder {
     /// Create RTP caps for filter element
     fn create_rtp_caps(&self) -> Result<Caps, Error> {
         let mut values: Vec<(&str, &dyn ToSendValue)> =
-            vec![("clock-rate", &90_000)];
+            vec![("clock-rate", &RTP_VIDEO_CLOCK_RATE)];
         if let Encoding::MPEG2 = self.source.encoding {
             values.push(("encoding-name", &"MP2T"));
         }
@@ -1011,7 +1017,7 @@ impl FlowBuilder {
         set_property(&txt, "auto-resize", &false)?;
         set_property(&txt, "text", &self.overlay_text.as_ref().unwrap())?;
         set_property(&txt, "shaded-background", &false)?;
-        set_property(&txt, "color", &0xFF_FF_FF_E0u32)?; // yellowish white
+        set_property(&txt, "color", &OVERLAY_COLOR)?;
         txt.set_property_from_str("wrap-mode", &"none");
         txt.set_property_from_str("halignment", &"right");
         txt.set_property_from_str("valignment", &"top");
