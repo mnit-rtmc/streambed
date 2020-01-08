@@ -174,6 +174,8 @@ pub struct FlowBuilder {
     pipeline: WeakRef<Pipeline>,
     /// Head element of pipeline
     head: Option<Element>,
+    /// Flag indicating playing
+    is_playing: bool,
 }
 
 /// Video flow
@@ -1069,9 +1071,10 @@ impl FlowBuilder {
     }
 
     /// Handle a bus message
-    fn handle_message(&self, msg: &Message) -> glib::Continue {
+    fn handle_message(&mut self, msg: &Message) -> glib::Continue {
         match msg.view() {
             MessageView::AsyncDone(_) => {
+                self.is_playing = true;
                 info!("{}: playing", self);
                 if let Some(feedback) = &self.feedback {
                     feedback.playing();
@@ -1114,7 +1117,7 @@ impl FlowBuilder {
     }
 
     /// Stop the flow
-    fn stop(&self) {
+    fn stop(&mut self) {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.set_state(State::Null).unwrap();
         }
@@ -1122,10 +1125,13 @@ impl FlowBuilder {
     }
 
     /// Provide feedback for stopped state
-    fn stopped(&self) {
-        info!("{}: stopped", self);
-        if let Some(fb) = &self.feedback {
-            fb.stopped();
+    fn stopped(&mut self) {
+        if self.is_playing {
+            self.is_playing = false;
+            info!("{}: stopped", self);
+            if let Some(fb) = &self.feedback {
+                fb.stopped();
+            }
         }
     }
 
