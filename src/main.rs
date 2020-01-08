@@ -166,11 +166,16 @@ struct Control {
 impl Feedback for Control {
     /// Flow playing
     fn playing(&self) {
-        debug!("flow{} playing", self.number);
+        debug!("Flow{} feedback playing", self.number);
     }
     /// Flow stopped
     fn stopped(&self) {
-        debug!("flow{} stopped", self.number);
+        debug!("Flow{} feedback stopped", self.number);
+    }
+    /// Update statistics
+    fn stats(&self, pushed: u64, lost: u64, late: u64) {
+        debug!("Flow{} feedback stats: {} pushed, {} lost, {} late",
+            self.number, pushed, lost, late);
     }
 }
 

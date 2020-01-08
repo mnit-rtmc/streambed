@@ -132,12 +132,14 @@ pub enum Sink {
     WINDOW(MatrixCrop),
 }
 
-/// Feedback on flow playing/stopped
+/// Flow feedback
 pub trait Feedback: Send {
     /// Flow playing
     fn playing(&self);
     /// Flow stopped
     fn stopped(&self);
+    /// Update statistics
+    fn stats(&self, pushed: u64, lost: u64, late: u64);
 }
 
 /// Hardware video acceleration
@@ -555,7 +557,7 @@ impl Sink {
 
 impl fmt::Display for FlowBuilder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Flow{} {}", self.idx, self.source.location)
+        write!(f, "Flow{}", self.idx)
     }
 }
 
@@ -608,6 +610,7 @@ impl FlowBuilder {
 
     /// Build the flow
     pub fn build(mut self) -> Result<Flow, Error> {
+        let idx = self.idx;
         let name = format!("m{}", self.idx);
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
@@ -618,8 +621,8 @@ impl FlowBuilder {
         if let Err(_) = bus.add_watch(move |_bus, m| self.handle_message(m)) {
             return Err(Error::ConnectSignal("watch"));
         }
-        let mut check = FlowCheck::new(pipeline.downgrade());
-        glib::source::timeout_add(timeout_ms, move || check.pts_check());
+        let mut checker = FlowChecker::new(idx, pipeline.downgrade());
+        glib::source::timeout_add(timeout_ms, move || checker.do_check());
         pipeline.set_state(State::Playing).unwrap();
         Ok(Flow {
             pipeline,
@@ -1002,7 +1005,7 @@ impl FlowBuilder {
                         Ok(overlay) => unsafe {
                             overlay.set_window_handle(handle);
                         },
-                        Err(_) => error!("invalid video overlay"),
+                        Err(_) => error!("{}: invalid video overlay", self),
                     }
                 }
             }
@@ -1026,7 +1029,7 @@ impl FlowBuilder {
 
     /// Add an element to pipeline
     fn add_element(&mut self, elem: Element) -> Result<(), Error> {
-        trace!("add_element: {} -- {}", elem.get_name(), self);
+        trace!("{}: add_element {}", self, elem.get_name());
         match self.pipeline.upgrade() {
             Some(pipeline) => {
                 if let Err(_) = pipeline.add(&elem) {
@@ -1045,12 +1048,12 @@ impl FlowBuilder {
 
     /// Link a source element with a sink
     fn link_src_sink(&self, src: &Element, sink: Element) -> Result<(), Error> {
-        debug!("{} => {} -- {}", src.get_name(), sink.get_name(), self);
+        debug!("{}: {} => {}", self, src.get_name(), sink.get_name());
         match src.link(&sink) {
             Ok(()) => {
                 let p0 = src.get_name();
                 let p1 = sink.get_name();
-                debug!("pad linked (static): {} => {}", p0, p1);
+                debug!("{}: pad linked (static) {} => {}", self, p0, p1);
             }
             Err(_) => {
                 let sink = sink.downgrade(); // weak ref
@@ -1069,13 +1072,13 @@ impl FlowBuilder {
     fn handle_message(&self, msg: &Message) -> glib::Continue {
         match msg.view() {
             MessageView::AsyncDone(_) => {
-                info!("playing -- {}", self);
+                info!("{}: playing", self);
                 if let Some(feedback) = &self.feedback {
                     feedback.playing();
                 }
             }
             MessageView::Eos(_) => {
-                warn!("end of stream -- {}", self);
+                debug!("{}: end of stream", self);
                 self.stop();
             }
             MessageView::StateChanged(chg) => {
@@ -1090,17 +1093,17 @@ impl FlowBuilder {
                 }
             }
             MessageView::Error(err) => {
-                error!("{} -- {}", err.get_error(), self);
+                error!("{}: {}", self, err.get_error());
                 self.stop();
             }
             MessageView::Warning(wrn) => {
-                warn!("{} -- {}", wrn.get_error(), self);
+                warn!("{}: {}", self, wrn.get_error());
                 self.stop();
             }
             MessageView::Element(elem) => {
                 if let Some(obj) = elem.get_src() {
                     if obj.get_name() == "GstUDPSrcTimeout" {
-                        warn!("udpsrc timeout -- {}", self);
+                        debug!("{}: udpsrc timeout", self);
                         self.stop();
                     }
                 }
@@ -1120,7 +1123,7 @@ impl FlowBuilder {
 
     /// Provide feedback for stopped state
     fn stopped(&self) {
-        info!("stopped -- {}", self);
+        info!("{}: stopped", self);
         if let Some(fb) = &self.feedback {
             fb.stopped();
         }
@@ -1138,7 +1141,7 @@ impl FlowBuilder {
                     self.configure_vbox(&pipeline, crop);
                 }
             }
-            None => error!("pipeline gone -- {}", self),
+            None => error!("{}: pipeline gone", self),
         }
     }
 
@@ -1148,12 +1151,12 @@ impl FlowBuilder {
             match txt.get_static_pad("src") {
                 Some(src_pad) => match src_pad.get_current_caps() {
                     Some(caps) => match self.config_txt_props(txt, caps) {
-                        Err(_) => error!("txt props -- {}", self),
+                        Err(_) => error!("{}: txt props", self),
                         _ => (),
                     },
-                    None => error!("no caps on txt src pad -- {}", self),
+                    None => error!("{}: no caps on txt src pad", self),
                 },
-                None => error!("no txt src pad -- {}", self),
+                None => error!("{}: no txt src pad", self),
             }
         }
     }
@@ -1164,7 +1167,7 @@ impl FlowBuilder {
             if let Ok(Some(height)) = s.get::<i32>("height") {
                 let sz = FONT_SZ * u32::try_from(height)? / DEFAULT_HEIGHT;
                 let margin = i32::try_from(sz / 2)?;
-                debug!("font sz: {}, height: {} -- {}", sz, height, self);
+                debug!("{}: font sz {}, height: {}", self, sz, height);
                 let font = format!("Overpass, Bold {}", sz);
                 set_property(&txt, "font-desc", &font)?;
                 set_property(&txt, "ypad", &margin)?; // from top edge
@@ -1181,13 +1184,13 @@ impl FlowBuilder {
                 Some(src_pad) => match src_pad.get_current_caps() {
                     Some(caps) => {
                         match self.config_vbox_props(vbx, caps, crop) {
-                            Err(_) => error!("vbox props -- {}", self),
+                            Err(_) => error!("{}: vbox props", self),
                             _ => (),
                         }
                     }
-                    None => error!("no caps on vbox src pad -- {}", self),
+                    None => error!("{}: no caps on vbox src pad", self),
                 },
-                None => error!("no vbox src pad -- {}", self),
+                None => error!("{}: no vbox src pad", self),
             }
         }
     }
@@ -1211,8 +1214,10 @@ impl FlowBuilder {
     }
 }
 
-/// Flow PTS stuck check
-struct FlowCheck {
+/// Periodic flow checker
+struct FlowChecker {
+    /// Index of flow
+    idx: usize,
     /// Flow pipeline
     pipeline: WeakRef<Pipeline>,
     /// Count of checks
@@ -1221,19 +1226,24 @@ struct FlowCheck {
     last_pts: ClockTime,
 }
 
-impl FlowCheck {
-    /// Create a new flow PTS stuck check
-    fn new(pipeline: WeakRef<Pipeline>) -> Self {
-        FlowCheck {
+impl fmt::Display for FlowChecker {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Flow{}", self.idx)
+    }
+}
+
+impl FlowChecker {
+    /// Create a new periodic flow checker
+    fn new(idx: usize, pipeline: WeakRef<Pipeline>) -> Self {
+        FlowChecker {
+            idx,
             pipeline,
             count: 0,
             last_pts: ClockTime::none(),
         }
     }
-    /// Check if PTS has stopped updating
-    ///
-    /// Post an EOS message if necessary.
-    fn pts_check(&mut self) -> glib::Continue {
+    /// Do periodic flow checks
+    fn do_check(&mut self) -> glib::Continue {
         self.count += 1;
         match self.pipeline.upgrade() {
             Some(pipeline) => {
@@ -1244,7 +1254,7 @@ impl FlowCheck {
                 self.check_sink(&pipeline)
             }
             None => {
-                debug!("pts_check pipeline gone");
+                debug!("{}: do_check pipeline gone", self);
                 glib::Continue(false)
             }
         }
@@ -1253,7 +1263,7 @@ impl FlowCheck {
     fn check_stopped(&self, pipeline: &Pipeline) -> bool {
         match pipeline.get_state(ClockTime::from_seconds(0)) {
             (_, State::Null, _) => {
-                debug!("flow restarting");
+                debug!("{}: restarting", self);
                 pipeline.set_state(State::Playing).unwrap();
                 true
             }
@@ -1268,14 +1278,14 @@ impl FlowCheck {
                     let msg = Message::new_eos().src(Some(&sink)).build();
                     let bus = pipeline.get_bus().unwrap();
                     if let Err(_) = bus.post(&msg) {
-                        error!("check_sink post failed");
+                        error!("{}: check_sink post failed", self);
                         return glib::Continue(false);
                     }
                 }
                 glib::Continue(true)
             }
             None => {
-                warn!("check_sink sink gone");
+                warn!("{}: check_sink sink gone", self);
                 glib::Continue(false)
             }
         }
@@ -1287,20 +1297,21 @@ impl FlowCheck {
                 Ok(Some(sample)) => match sample.get_buffer() {
                     Some(buffer) => {
                         let pts = buffer.get_pts();
-                        trace!("PTS: {}", pts);
+                        trace!("{}: PTS {}", self, pts);
                         let stuck = pts == self.last_pts;
                         if stuck {
-                            info!("PTS stuck at {}; posting EOS", pts);
+                            debug!("{}: PTS stuck @ {} -- posting EOS", self,
+                                pts);
                         } else {
                             self.last_pts = pts;
                         }
                         return stuck;
                     }
-                    None => error!("sample buffer missing"),
+                    None => error!("{}: sample buffer missing", self),
                 },
-                _ => debug!("last-sample missing: {}", self.count),
+                _ => debug!("{}: last-sample missing {}", self, self.count),
             },
-            Err(_) => error!("get last-sample failed"),
+            Err(_) => error!("{}: get last-sample failed", self),
         };
         self.count > PTS_CHECK_TRIES
     }
