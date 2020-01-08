@@ -1305,7 +1305,7 @@ impl FlowChecker {
                     self.count = 0;
                     return glib::Continue(true);
                 }
-                if !self.check_stats(&pipeline) {
+                if !self.post_stats(&pipeline) {
                     return glib::Continue(false);
                 }
                 self.check_sink(&pipeline)
@@ -1327,15 +1327,15 @@ impl FlowChecker {
             _ => false,
         }
     }
-    /// Check stats in a pipeline
-    fn check_stats(&self, pipeline: &Pipeline) -> bool {
+    /// Post stats message
+    fn post_stats(&self, pipeline: &Pipeline) -> bool {
         let structure = Structure::new_empty("stats");
         let msg = Message::new_application(structure).build();
         let bus = pipeline.get_bus().unwrap();
         match bus.post(&msg) {
             Ok(_) => true,
             Err(_) => {
-                error!("{}: check_stats post failed", self);
+                error!("{}: post_stats failed", self);
                 false
             }
         }
