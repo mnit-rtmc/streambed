@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Flow, FlowBuilder, Sink, Source,
@@ -153,30 +154,6 @@ impl FlowConfig {
                 true,
             ),
             _ => Sink::FAKE,
-        }
-    }
-}
-
-/// Control feedback
-struct Control {
-    /// Flow number
-    number: usize,
-}
-
-impl Feedback for Control {
-    /// Flow playing
-    fn playing(&self) {
-        debug!("Flow{} feedback playing", self.number);
-    }
-    /// Flow stopped
-    fn stopped(&self) {
-        debug!("Flow{} feedback stopped", self.number);
-    }
-    /// Update statistics
-    fn stats(&self, pushed: u64, lost: u64, late: u64) {
-        if pushed > 0 || lost > 0 || late > 0 {
-            debug!("Flow{} feedback stats: {} pushed, {} lost, {} late",
-                self.number, pushed, lost, late);
         }
     }
 }
@@ -494,15 +471,15 @@ impl Config {
         Ok(number)
     }
     /// Convert config into a Vec of Flows
-    fn into_flows(self) -> Result<Vec<Flow>, Error> {
+    fn into_flows(self, fb: Sender<Feedback>) -> Result<Vec<Flow>, Error> {
         let mut flows = vec![];
         for i in 0..self.flow.len() {
-            flows.push(self.flow(i)?);
+            flows.push(self.flow(i, fb.clone())?);
         }
         Ok(flows)
     }
     /// Create a flow
-    fn flow(&self, i: usize) -> Result<Flow, Error> {
+    fn flow(&self, i: usize, fb: Sender<Feedback>) -> Result<Flow, Error> {
         let acceleration = match &self.acceleration {
             Some(a) => a.parse::<Acceleration>()?,
             None => Acceleration::NONE,
@@ -513,7 +490,7 @@ impl Config {
                 .with_source(flow_cfg.source())
                 .with_overlay_text(flow_cfg.overlay_text())
                 .with_sink(flow_cfg.sink())
-                .with_feedback(Some(Box::new(Control { number: i })))
+                .with_feedback(Some(fb))
                 .build()?;
             Ok(flow)
         } else {
@@ -532,22 +509,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("flow", Some(matches)) => {
             config.flow_subcommand(matches)?;
         }
-        ("run", Some(_matches)) => {
-            gstreamer::init().expect("gstreamer init failed!");
-            let control_port = config.control_port.unwrap_or(8001);
-            let flows = config.into_flows()?;
-            run_subcommand(control_port, flows)?
-        }
+        ("run", Some(_matches)) => run_subcommand(config)?,
         _ => unreachable!(),
     }
     Ok(())
 }
 
 /// Run sub-command
-fn run_subcommand(control_port: u16, flows: Vec<Flow>) -> Result<(), Error> {
+fn run_subcommand(config: Config) -> Result<(), Error> {
+    gstreamer::init().expect("gstreamer init failed!");
+    let (tx, rx) = channel();
+    thread::spawn(move || {
+        let mut n_playing = 0;
+        let mut n_stopped = 0;
+        loop {
+            match rx.recv().unwrap() {
+                Feedback::Playing(idx) => {
+                    n_playing += 1;
+                    n_stopped -= 1;
+                    info!("Flow{} started: {} playing, {} stopped", idx,
+                        n_playing, n_stopped);
+                },
+                Feedback::Stopped(idx) => {
+                    n_stopped += 1;
+                    if n_playing > 0 {
+                        n_playing -= 1;
+                    }
+                    info!("Flow{} stopped: {} playing, {} stopped", idx,
+                        n_playing, n_stopped);
+                },
+                _ => (),
+            }
+        }
+    });
+    let control_port = config.control_port.unwrap_or(8001);
+    let flows = config.into_flows(tx.clone())?;
     let address: IpAddr = "::".parse()?;
     let listener = TcpListener::bind((address, control_port))?;
-    thread::spawn(move || command_thread(listener, flows));
+    thread::spawn(move || command_thread(listener, flows, tx));
     let mainloop = glib::MainLoop::new(None, false);
     mainloop.run();
     Ok(())
@@ -555,12 +554,12 @@ fn run_subcommand(control_port: u16, flows: Vec<Flow>) -> Result<(), Error> {
 
 /// Thread to handle remote commands
 fn command_thread(
-    listener: TcpListener, mut flows: Vec<Flow>,
+    listener: TcpListener, mut flows: Vec<Flow>, fb: Sender<Feedback>,
 ) -> Result<(), Error> {
     loop {
         let (socket, remote) = listener.accept()?;
         info!("command connection OPENED: {:?}", remote);
-        match process_commands(socket, &mut flows) {
+        match process_commands(socket, &mut flows, fb.clone()) {
             Err(e) => warn!("{:?} processing command", e),
             _ => (),
         }
@@ -570,7 +569,7 @@ fn command_thread(
 
 /// Process remote commands
 fn process_commands(
-    socket: TcpStream, flows: &mut Vec<Flow>,
+    socket: TcpStream, flows: &mut Vec<Flow>, fb: Sender<Feedback>,
 ) -> Result<(), Error> {
     let mut buf = vec![];
     let mut reader = BufReader::new(socket);
@@ -582,7 +581,7 @@ fn process_commands(
         match buf.pop() {
             Some(SEP_GROUP) => {
                 let cmd = std::str::from_utf8(&buf)?;
-                process_command(cmd, flows)?;
+                process_command(cmd, flows, fb.clone())?;
             }
             Some(b) => {
                 debug!("Invalid command separator: 0x{:X}", b);
@@ -596,20 +595,22 @@ fn process_commands(
 }
 
 /// Process a remote command
-fn process_command(cmd: &str, flows: &mut Vec<Flow>) -> Result<(), Error> {
+fn process_command(cmd: &str, flows: &mut Vec<Flow>, fb: Sender<Feedback>)
+    -> Result<(), Error>
+{
     // Maybe someday, use SEP_RECORD instead of \x1E
     if cmd.starts_with("flow\x1E") {
         let params = &cmd[5..];
         let mut config = Config::load();
         let number = config.flow_subcommand(&params)?;
-        flows[number] = config.flow(number)?;
+        flows[number] = config.flow(number, fb)?;
         return Ok(());
     } else if cmd.starts_with("config\x1E") {
         let params = &cmd[7..];
         let mut config = Config::load();
         config.config_subcommand(&params)?;
         flows.clear();
-        flows.extend(config.into_flows()?);
+        flows.extend(config.into_flows(fb)?);
         return Ok(());
     }
     debug!("Invalid command: {:?}", cmd);

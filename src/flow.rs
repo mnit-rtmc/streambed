@@ -10,10 +10,11 @@ use gstreamer::{
     MessageView, Pad, PadExt, PadExtManual, Pipeline, Sample, State, Structure,
 };
 use gstreamer_video::{VideoOverlay, VideoOverlayExtManual};
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn};
 use std::convert::TryFrom;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::mpsc::Sender;
 
 /// One second (microsecond units)
 const SEC_US: u64 = 1_000_000;
@@ -133,13 +134,26 @@ pub enum Sink {
 }
 
 /// Flow feedback
-pub trait Feedback: Send {
+pub enum Feedback {
     /// Flow playing
-    fn playing(&self);
+    Playing(usize),
     /// Flow stopped
-    fn stopped(&self);
+    Stopped(usize),
     /// Update statistics
-    fn stats(&self, pushed: u64, lost: u64, late: u64);
+    Stats(usize, u64, u64, u64),
+}
+
+impl fmt::Display for Feedback {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Feedback::Playing(idx) => write!(f, "Flow{} playing", idx),
+            Feedback::Stopped(idx) => write!(f, "Flow{} stopped", idx),
+            Feedback::Stats(idx, pushed, lost, late) => {
+                write!(f, "Flow{} stats: {} pushed, {} lost, {} late",
+                    idx, pushed, lost, late)
+            }
+        }
+    }
 }
 
 /// Hardware video acceleration
@@ -170,7 +184,7 @@ pub struct FlowBuilder {
     /// Overlay text
     overlay_text: Option<String>,
     /// Flow feedback
-    feedback: Option<Box<dyn Feedback>>,
+    feedback: Option<Sender<Feedback>>,
     /// Video overlay handle
     handle: Option<usize>,
     /// Pipeline for flow
@@ -613,7 +627,7 @@ impl FlowBuilder {
 
     /// Use the specified flow feedback
     pub fn with_feedback(
-        mut self, feedback: Option<Box<dyn Feedback>>,
+        mut self, feedback: Option<Sender<Feedback>>,
     ) -> Self {
         self.feedback = feedback;
         self
@@ -632,6 +646,7 @@ impl FlowBuilder {
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
+        self.is_playing = true;
         self.stopped();
         let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
@@ -1087,9 +1102,11 @@ impl FlowBuilder {
         match msg.view() {
             MessageView::AsyncDone(_) => {
                 self.is_playing = true;
-                info!("{}: playing", self);
-                if let Some(feedback) = &self.feedback {
-                    feedback.playing();
+                debug!("{}: playing", self);
+                if let Some(fb) = &self.feedback {
+                    if let Err(e) = fb.send(Feedback::Playing(self.idx)) {
+                        error!("{}: send {}", self, e);
+                    }
                 }
             }
             MessageView::Eos(_) => {
@@ -1141,9 +1158,11 @@ impl FlowBuilder {
     fn stopped(&mut self) {
         if self.is_playing {
             self.is_playing = false;
-            info!("{}: stopped", self);
+            debug!("{}: stopped", self);
             if let Some(fb) = &self.feedback {
-                fb.stopped();
+                if let Err(e) = fb.send(Feedback::Stopped(self.idx)) {
+                    error!("{}: send {}", self, e);
+                }
             }
         }
     }
@@ -1251,7 +1270,11 @@ impl FlowBuilder {
                 let pushed = self.pushed - pushed;
                 let lost = self.lost - lost;
                 let late = self.late - late;
-                fb.stats(pushed, lost, late);
+                if let Err(e) = fb.send(Feedback::Stats(self.idx, pushed, lost,
+                    late))
+                {
+                    error!("{}: send {}", self, e);
+                }
             }
         }
     }
