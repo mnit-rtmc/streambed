@@ -195,6 +195,18 @@ pub struct Flow {
     bus: Bus,
 }
 
+/// Periodic flow checker
+struct FlowChecker {
+    /// Index of flow
+    idx: usize,
+    /// Flow pipeline
+    pipeline: WeakRef<Pipeline>,
+    /// Count of checks
+    count: usize,
+    /// Most recent presentation time stamp
+    last_pts: ClockTime,
+}
+
 /// Make a pipeline element
 fn make_element(
     factory_name: &'static str, name: Option<&str>,
@@ -1261,16 +1273,11 @@ impl FlowBuilder {
     }
 }
 
-/// Periodic flow checker
-struct FlowChecker {
-    /// Index of flow
-    idx: usize,
-    /// Flow pipeline
-    pipeline: WeakRef<Pipeline>,
-    /// Count of checks
-    count: usize,
-    /// Most recent presentation time stamp
-    last_pts: ClockTime,
+impl Drop for Flow {
+    fn drop(&mut self) {
+        self.bus.remove_watch().unwrap();
+        self.pipeline.set_state(State::Null).unwrap();
+    }
 }
 
 impl fmt::Display for FlowChecker {
@@ -1377,12 +1384,5 @@ impl FlowChecker {
             Err(_) => error!("{}: get last-sample failed", self),
         };
         self.count > PTS_CHECK_TRIES
-    }
-}
-
-impl Drop for Flow {
-    fn drop(&mut self) {
-        self.bus.remove_watch().unwrap();
-        self.pipeline.set_state(State::Null).unwrap();
     }
 }
