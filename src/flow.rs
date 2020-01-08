@@ -154,6 +154,9 @@ pub enum Acceleration {
 }
 
 /// Builder for video flows
+///
+/// After a Flow is built, these structs are owned
+/// by a bus watcher which handles bus messages.
 #[derive(Default)]
 pub struct FlowBuilder {
     /// Index of flow
@@ -176,6 +179,12 @@ pub struct FlowBuilder {
     head: Option<Element>,
     /// Flag indicating playing
     is_playing: bool,
+    /// Number of pushed packets
+    pushed: u64,
+    /// Number of lost packets
+    lost: u64,
+    /// Number of late packets
+    late: u64,
 }
 
 /// Video flow
@@ -184,12 +193,6 @@ pub struct Flow {
     pipeline: Pipeline,
     /// Pipeline message bus
     bus: Bus,
-    /// Number of pushed packets
-    pushed: u64,
-    /// Number of lost packets
-    lost: u64,
-    /// Number of late packets
-    late: u64,
 }
 
 /// Make a pipeline element
@@ -629,9 +632,6 @@ impl FlowBuilder {
         Ok(Flow {
             pipeline,
             bus,
-            pushed: 0,
-            lost: 0,
-            late: 0,
         })
     }
 
@@ -1111,6 +1111,7 @@ impl FlowBuilder {
                     }
                 }
             }
+            MessageView::Application(_app) => self.update_packet_stats(),
             _ => (),
         };
         glib::Continue(true)
@@ -1218,6 +1219,46 @@ impl FlowBuilder {
         }
         Ok(())
     }
+    /// Update packet statistics
+    fn update_packet_stats(&mut self) {
+        let pushed = self.pushed;
+        let lost = self.lost;
+        let late = self.late;
+        match self.pipeline.upgrade() {
+            Some(pipeline) => {
+                if let Some(jitter) = pipeline.get_by_name("jitter") {
+                    if let Err(e) = self.update_jitter_stats(jitter) {
+                        warn!("{}: jitter stats -- {}", self, e);
+                    }
+                }
+            }
+            None => error!("{}: pipeline gone", self),
+        }
+        if self.pushed >= pushed && self.lost >= lost && self.late >= late {
+            if let Some(fb) = &self.feedback {
+                let pushed = self.pushed - pushed;
+                let lost = self.lost - lost;
+                let late = self.late - late;
+                fb.stats(pushed, lost, late);
+            }
+        }
+    }
+    /// Get statistics from jitter buffer element
+    fn update_jitter_stats(&mut self, jitter: Element) -> Result<(), Error> {
+        let prop = jitter.get_property("stats")?;
+        let stats = prop.get::<Structure>()?
+            .ok_or(Error::Other("empty stats"))?;
+        let pushed = stats.get::<u64>("num-pushed")?
+            .ok_or(Error::Other("missing num-pushed"))?;
+        let lost = stats.get::<u64>("num-lost")?
+            .ok_or(Error::Other("missing num-lost"))?;
+        let late = stats.get::<u64>("num-late")?
+            .ok_or(Error::Other("missing num-late"))?;
+        self.pushed = pushed;
+        self.lost = lost;
+        self.late = late;
+        Ok(())
+    }
 }
 
 /// Periodic flow checker
@@ -1257,6 +1298,9 @@ impl FlowChecker {
                     self.count = 0;
                     return glib::Continue(true);
                 }
+                if !self.check_stats(&pipeline) {
+                    return glib::Continue(false);
+                }
                 self.check_sink(&pipeline)
             }
             None => {
@@ -1274,6 +1318,19 @@ impl FlowChecker {
                 true
             }
             _ => false,
+        }
+    }
+    /// Check stats in a pipeline
+    fn check_stats(&self, pipeline: &Pipeline) -> bool {
+        let structure = Structure::new_empty("stats");
+        let msg = Message::new_application(structure).build();
+        let bus = pipeline.get_bus().unwrap();
+        match bus.post(&msg) {
+            Ok(_) => true,
+            Err(_) => {
+                error!("{}: check_stats post failed", self);
+                false
+            }
         }
     }
     /// Check sink in a pipeline
@@ -1326,62 +1383,6 @@ impl FlowChecker {
 impl Drop for Flow {
     fn drop(&mut self) {
         self.bus.remove_watch().unwrap();
-        self.pipeline.set_state(State::Null).unwrap();
-    }
-}
-
-impl Flow {
-    /// Get packet statistics
-    pub fn packet_stats(&mut self) -> Option<(u64, u64, u64)> {
-        let pushed = self.pushed;
-        let lost = self.lost;
-        let late = self.late;
-        let update = self.update_stats();
-        if update
-            && self.pushed >= pushed
-            && self.lost >= lost
-            && self.late >= late
-        {
-            Some((self.pushed - pushed, self.lost - lost, self.late - late))
-        } else {
-            None
-        }
-    }
-
-    /// Update packet statistics
-    fn update_stats(&mut self) -> bool {
-        match self.pipeline.get_by_name("jitter") {
-            Some(jitter) => self.jitter_stats(jitter),
-            None => false,
-        }
-    }
-
-    /// Get statistics from jitter buffer element
-    fn jitter_stats(&mut self, jitter: Element) -> bool {
-        match jitter.get_property("stats") {
-            Ok(stats) => match stats.get::<Structure>() {
-                Ok(Some(stats)) => {
-                    let pushed = stats.get::<u64>("num-pushed");
-                    let lost = stats.get::<u64>("num-lost");
-                    let late = stats.get::<u64>("num-late");
-                    match (pushed, lost, late) {
-                        (Ok(Some(pushed)), Ok(Some(lost)), Ok(Some(late))) => {
-                            self.pushed = pushed;
-                            self.lost = lost;
-                            self.late = late;
-                        }
-                        _ => warn!("stats empty"),
-                    }
-                }
-                _ => warn!("missing stats"),
-            },
-            Err(_) => warn!("failed to get jitter stats"),
-        }
-        false
-    }
-
-    /// Stop the flow
-    pub fn stop(&self) {
         self.pipeline.set_state(State::Null).unwrap();
     }
 }

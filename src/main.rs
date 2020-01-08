@@ -174,8 +174,10 @@ impl Feedback for Control {
     }
     /// Update statistics
     fn stats(&self, pushed: u64, lost: u64, late: u64) {
-        debug!("Flow{} feedback stats: {} pushed, {} lost, {} late",
-            self.number, pushed, lost, late);
+        if pushed > 0 || lost > 0 || late > 0 {
+            debug!("Flow{} feedback stats: {} pushed, {} lost, {} late",
+                self.number, pushed, lost, late);
+        }
     }
 }
 

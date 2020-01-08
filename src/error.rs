@@ -68,6 +68,24 @@ impl std::error::Error for Error {
     }
 }
 
+impl From<glib::error::BoolError> for Error {
+    fn from(_e: glib::error::BoolError) -> Self {
+        Error::Other("glib bool error")
+    }
+}
+
+impl From<glib::value::GetError> for Error {
+    fn from(_e: glib::value::GetError) -> Self {
+        Error::Other("glib value get")
+    }
+}
+
+impl From<gstreamer::structure::GetError<'_>> for Error {
+    fn from(_e: gstreamer::structure::GetError) -> Self {
+        Error::Other("gstreamer structure get")
+    }
+}
+
 impl From<AddrParseError> for Error {
     fn from(e: AddrParseError) -> Self {
         Error::ParseAddr(e)
