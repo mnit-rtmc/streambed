@@ -15,6 +15,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Flow, FlowBuilder, Sink, Source,
+    Transport,
 };
 
 /// Crate version
@@ -22,6 +23,9 @@ const VERSION: &'static str = std::env!("CARGO_PKG_VERSION");
 
 /// Configuration file name
 const CONFIG_FILE: &'static str = "streambed.muon";
+
+/// Possible RTSP transports
+const TRANSPORTS: &[&'static str] = &["", "ANY", "UDP", "MCAST", "TCP"];
 
 /// Possible video encodings
 const ENCODINGS: &[&'static str] =
@@ -76,6 +80,8 @@ impl Default for Location {
 struct FlowConfig {
     /// Source location URI
     location: Location,
+    /// RTSP transport
+    rtsp_transport: Option<String>,
     /// Source encoding
     source_encoding: Option<String>,
     /// Source timeout in seconds
@@ -95,6 +101,16 @@ struct FlowConfig {
 }
 
 impl FlowConfig {
+    /// Get RTSP transport
+    fn rtsp_transport(&self) -> Transport {
+        match &self.rtsp_transport {
+            Some(t) => match t.parse() {
+                Ok(t) => t,
+                Err(_) => Transport::default(),
+            },
+            None => Transport::default(),
+        }
+    }
     /// Get source encoding
     fn source_encoding(&self) -> Encoding {
         match &self.source_encoding {
@@ -123,6 +139,7 @@ impl FlowConfig {
     fn source(&self) -> Source {
         Source::default()
             .with_location(&self.location.0)
+            .with_rtsp_transport(self.rtsp_transport())
             .with_encoding(self.source_encoding())
             .with_timeout(self.timeout())
             .with_latency(self.latency())
@@ -237,6 +254,14 @@ fn create_app(config: &Config) -> App<'static, 'static> {
                         .help("source location or URI")
                         .value_name("uri")
                         .empty_values(false),
+                )
+                .arg(
+                    Arg::with_name("rtsp-transport")
+                        .short("r")
+                        .long("rtsp-transport")
+                        .help("rtsp-transport")
+                        .value_name("transport")
+                        .possible_values(TRANSPORTS),
                 )
                 .arg(
                     Arg::with_name("source-encoding")
@@ -403,6 +428,15 @@ impl Config {
                 0: String::from(location),
             };
             set_param!(number, location);
+            param = true;
+        }
+        if let Some(rtsp_transport) = params.value("rtsp-transport") {
+            flow.rtsp_transport = if rtsp_transport.len() > 0 {
+                Some(String::from(rtsp_transport))
+            } else {
+                None
+            };
+            set_param!(number, rtsp_transport);
             param = true;
         }
         if let Some(source_encoding) = params.value("source-encoding") {

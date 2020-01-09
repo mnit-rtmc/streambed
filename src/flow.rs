@@ -52,6 +52,19 @@ const DEFAULT_HEIGHT: u32 = 240;
 /// User agent including version
 const AGENT: &'static str = concat!("streambed/", env!("CARGO_PKG_VERSION"));
 
+/// Network transport
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Transport {
+    /// Any transport
+    ANY,
+    /// UDP transport
+    UDP,
+    /// UDP multicast transport
+    MCAST,
+    /// TCP transport
+    TCP,
+}
+
 /// Video encoding
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Encoding {
@@ -81,6 +94,8 @@ pub enum Encoding {
 pub struct Source {
     /// Source location URI
     location: String,
+    /// RTSP transport
+    rtsp_transport: Transport,
     /// Source encoding
     encoding: Encoding,
     /// RTP source properties (from SDP)
@@ -282,6 +297,26 @@ impl FromStr for Acceleration {
     }
 }
 
+impl Default for Transport {
+    fn default() -> Self {
+        Transport::ANY
+    }
+}
+
+impl FromStr for Transport {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ANY" => Ok(Self::ANY),
+            "UDP" => Ok(Self::UDP),
+            "MCAST" => Ok(Self::MCAST),
+            "TCP" => Ok(Self::TCP),
+            _ => Err(Error::Other("invalid transport")),
+        }
+    }
+}
+
 impl Default for Encoding {
     fn default() -> Self {
         Encoding::RAW
@@ -342,6 +377,7 @@ impl Default for Source {
     fn default() -> Self {
         Source {
             location: String::new(),
+            rtsp_transport: Transport::default(),
             encoding: Encoding::default(),
             sprops: None,
             timeout: DEFAULT_TIMEOUT_SEC,
@@ -354,6 +390,12 @@ impl Source {
     /// Use the specified location
     pub fn with_location(mut self, location: &str) -> Self {
         self.location = location.to_string();
+        self
+    }
+
+    /// Use the specified transport
+    pub fn with_rtsp_transport(mut self, rtsp_transport: Transport) -> Self {
+        self.rtsp_transport = rtsp_transport;
         self
     }
 
@@ -887,8 +929,14 @@ impl FlowBuilder {
     fn add_source_rtsp(&mut self) -> Result<(), Error> {
         let src = make_element("rtspsrc", None)?;
         set_property(&src, "location", &self.source.location)?;
-        // TCP is required when packet loss is high
-        src.set_property_from_str("protocols", &"tcp");
+        match &self.source.rtsp_transport {
+            Transport::ANY => (),
+            Transport::UDP => src.set_property_from_str("protocols", &"udp"),
+            Transport::MCAST => {
+                src.set_property_from_str("protocols", &"udp-mcast");
+            },
+            Transport::TCP => src.set_property_from_str("protocols", &"tcp"),
+        }
         set_property(&src, "tcp-timeout", &self.source.timeout_us())?;
         // Retry TCP after UDP timeout (0 for disabled)
         set_property(&src, "timeout", &self.source.timeout_us())?;

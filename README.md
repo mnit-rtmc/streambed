@@ -59,6 +59,7 @@ Parameter         | Description
 ------------------|----------------------------
 `number`          | `0` to `flows` minus one
 `location`        | source location URI
+`rtsp-transport`  | `ANY`, `UDP`, `MCAST`, `TCP` (use `TCP` when packet loss is high)
 `source-encoding` | `PNG`, `MJPEG`, `MPEG2`, `MPEG4`, `H264`, `VP8`, `VP9`
 `timeout`         | source timeout in seconds
 `latency`         | buffering latency in milliseconds
