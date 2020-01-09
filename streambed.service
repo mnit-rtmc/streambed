@@ -3,11 +3,12 @@ Description=Streambed Video Streamer
 StartLimitIntervalSec=0
 
 [Service]
-Environment=RUST_LOG=warn
-ExecStart=/usr/local/bin/streambed
+Environment=RUST_LOG=info
+LimitNOFILE=8192
+ExecStart=/usr/local/bin/streambed run
 Restart=always
 RestartSec=2
-User=tms
+User=streambed
 
 [Install]
 WantedBy=multi-user.target
