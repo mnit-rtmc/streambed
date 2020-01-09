@@ -1125,11 +1125,11 @@ impl FlowBuilder {
                 }
             }
             MessageView::Error(err) => {
-                error!("{}: {}", self, err.get_error());
+                debug!("{}: error {}", self, err.get_error());
                 self.stop();
             }
             MessageView::Warning(wrn) => {
-                warn!("{}: {}", self, wrn.get_error());
+                debug!("{}: warning {}", self, wrn.get_error());
                 self.stop();
             }
             MessageView::Element(elem) => {
