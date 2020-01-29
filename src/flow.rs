@@ -265,7 +265,7 @@ fn link_ghost_pad(idx: usize, src: &Element, src_pad: &Pad, sink: Element) {
             let p1 = sink.get_name();
             match src_pad.link(&sink_pad) {
                 Ok(_) => {
-                    debug!("Flow{} pad {} linked: {} => {}", idx, pn, p0, p1);
+                    trace!("Flow{} pad {} linked: {} => {}", idx, pn, p0, p1);
                 }
                 Err(_) => {
                     debug!("Flow{} pad {} not linked: {} => {}", idx, pn,p0,p1);
@@ -551,7 +551,7 @@ impl MatrixCrop {
         let den = u32::from(self.height);
         let pix = height * num / den;
         let gap = height * self.vgap / (den * MatrixCrop::PERCENT * 2);
-        debug!("crop top: {} + {} = {}", pix, gap, pix + gap);
+        trace!("crop top: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 
@@ -561,7 +561,7 @@ impl MatrixCrop {
         let den = u32::from(self.height);
         let pix = height * num / den;
         let gap = height * self.vgap / (den * MatrixCrop::PERCENT * 2);
-        debug!("crop bottom: {} + {} = {}", pix, gap, pix + gap);
+        trace!("crop bottom: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 
@@ -571,7 +571,7 @@ impl MatrixCrop {
         let den = u32::from(self.width);
         let pix = width * num / den;
         let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
-        debug!("crop left: {} + {} = {}", pix, gap, pix + gap);
+        trace!("crop left: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 
@@ -581,7 +581,7 @@ impl MatrixCrop {
         let den = u32::from(self.width);
         let pix = width * num / den;
         let gap = width * self.hgap / (den * MatrixCrop::PERCENT * 2);
-        debug!("crop right: {} + {} = {}", pix, gap, pix + gap);
+        trace!("crop right: {} + {} = {}", pix, gap, pix + gap);
         pix + gap
     }
 }
@@ -1129,12 +1129,12 @@ impl FlowBuilder {
 
     /// Link a source element with a sink
     fn link_src_sink(&self, src: &Element, sink: Element) -> Result<(), Error> {
-        debug!("{}: {} => {}", self, src.get_name(), sink.get_name());
+        trace!("{}: {} => {}", self, src.get_name(), sink.get_name());
         match src.link(&sink) {
             Ok(()) => {
                 let p0 = src.get_name();
                 let p1 = sink.get_name();
-                debug!("{}: pad linked (static) {} => {}", self, p0, p1);
+                trace!("{}: pad linked (static) {} => {}", self, p0, p1);
             }
             Err(_) => {
                 let sink = sink.downgrade(); // weak ref
@@ -1155,7 +1155,7 @@ impl FlowBuilder {
         match msg.view() {
             MessageView::AsyncDone(_) => {
                 self.is_playing = true;
-                debug!("{}: playing", self);
+                trace!("{}: playing", self);
                 if let Some(fb) = &self.feedback {
                     if let Err(e) = fb.send(Feedback::Playing(self.idx)) {
                         error!("{}: send {}", self, e);
@@ -1163,7 +1163,7 @@ impl FlowBuilder {
                 }
             }
             MessageView::Eos(_) => {
-                debug!("{}: end of stream", self);
+                trace!("{}: end of stream", self);
                 self.stop();
             }
             MessageView::StateChanged(chg) => {
@@ -1211,7 +1211,7 @@ impl FlowBuilder {
     fn stopped(&mut self) {
         if self.is_playing {
             self.is_playing = false;
-            debug!("{}: stopped", self);
+            trace!("{}: stopped", self);
             if let Some(fb) = &self.feedback {
                 if let Err(e) = fb.send(Feedback::Stopped(self.idx)) {
                     error!("{}: send {}", self, e);
@@ -1258,7 +1258,7 @@ impl FlowBuilder {
             if let Ok(Some(height)) = s.get::<i32>("height") {
                 let sz = FONT_SZ * u32::try_from(height)? / DEFAULT_HEIGHT;
                 let margin = i32::try_from(sz / 2)?;
-                debug!("{}: font sz {}, height: {}", self, sz, height);
+                trace!("{}: font sz {}, height: {}", self, sz, height);
                 let font = format!("Overpass, Bold {}", sz);
                 set_property(&txt, "font-desc", &font)?;
                 set_property(&txt, "ypad", &margin)?; // from top edge
@@ -1406,7 +1406,7 @@ impl FlowChecker {
     fn check_stopped(&self, pipeline: &Pipeline) -> bool {
         match pipeline.get_state(ClockTime::from_seconds(0)) {
             (_, State::Null, _) => {
-                debug!("{}: restarting", self);
+                trace!("{}: restarting", self);
                 pipeline.set_state(State::Playing).unwrap();
                 true
             }
