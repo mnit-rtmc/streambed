@@ -1351,6 +1351,16 @@ impl Drop for Flow {
     }
 }
 
+impl Flow {
+    /// Check if the flow is playing
+    pub fn is_playing(&self) -> bool {
+        match self.pipeline.get_state(ClockTime::from_seconds(0)) {
+             (_, State::Playing, _) => true,
+             _ => false,
+        }
+    }
+}
+
 impl fmt::Display for FlowChecker {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Flow{}", self.idx)

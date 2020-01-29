@@ -11,7 +11,8 @@ use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Flow, FlowBuilder, Sink, Source,
@@ -399,9 +400,11 @@ impl Config {
         }
         if let Some(flows) = params.value("flows") {
             let flows: usize = flows.parse()?;
-            self.flow.resize_with(flows, Default::default);
-            info!("Setting `flows` => {}", flows);
-            param = true;
+            if flows != self.flow.len() {
+                self.flow.resize_with(flows, Default::default);
+                info!("Setting `flows` => {}", flows);
+                param = true;
+            }
         }
         if !param {
             println!("\n{}", muon_rs::to_string(&self)?);
@@ -424,6 +427,9 @@ impl Config {
         let mut flow = &mut self.flow[number];
         let mut param = false;
         if let Some(location) = params.value("location") {
+            if location.is_empty() {
+                return Err(Error::Other("Invalid location"));
+            }
             flow.location = Location {
                 0: String::from(location),
             };
@@ -553,42 +559,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_subcommand(config: Config) -> Result<(), Error> {
     gstreamer::init().expect("gstreamer init failed!");
     let (tx, rx) = channel();
-    thread::spawn(move || {
-        let mut n_playing = 0;
-        let mut n_stopped = 0;
-        loop {
-            match rx.recv().unwrap() {
-                Feedback::Playing(idx) => {
-                    n_playing += 1;
-                    n_stopped -= 1;
-                    info!("Flow{} started: {} playing, {} stopped", idx,
-                        n_playing, n_stopped);
-                },
-                Feedback::Stopped(idx) => {
-                    n_stopped += 1;
-                    if n_playing > 0 {
-                        n_playing -= 1;
-                    }
-                    info!("Flow{} stopped: {} playing, {} stopped", idx,
-                        n_playing, n_stopped);
-                },
-                _ => (),
-            }
-        }
-    });
     let control_port = config.control_port.unwrap_or(8001);
     let flows = config.into_flows(tx.clone())?;
+    let flows = Arc::new(Mutex::new(flows));
     let address: IpAddr = "::".parse()?;
     let listener = TcpListener::bind((address, control_port))?;
-    thread::spawn(move || command_thread(listener, flows, tx));
+    let c_flows = Arc::clone(&flows);
+    thread::spawn(move || command_thread(listener, c_flows, tx));
+    thread::spawn(move || feedback_thread(flows, rx));
     let mainloop = glib::MainLoop::new(None, false);
     mainloop.run();
     Ok(())
 }
 
+/// Thread to receive feedback
+fn feedback_thread(flows: Arc<Mutex<Vec<Flow>>>, rx: Receiver<Feedback>
+) -> Result<(), Error> {
+    loop {
+        let state = rx.recv().unwrap();
+        let (n_playing, n_stopped) = count_flows(&flows);
+        match state {
+            Feedback::Playing(idx) => {
+                info!("Flow{} started: {} playing, {} stopped", idx,
+                    n_playing, n_stopped);
+            },
+            Feedback::Stopped(idx) => {
+                info!("Flow{} stopped: {} playing, {} stopped", idx,
+                    n_playing, n_stopped);
+            },
+            _ => (),
+        }
+    }
+}
+
+/// Count playing and stopped flows
+fn count_flows(flows: &Arc<Mutex<Vec<Flow>>>) -> (usize, usize) {
+    let flows = flows.lock().unwrap();
+    let n_playing = flows.iter().filter(|f| f.is_playing()).count();
+    let n_stopped = flows.len() - n_playing;
+    (n_playing, n_stopped)
+}
+
 /// Thread to handle remote commands
 fn command_thread(
-    listener: TcpListener, mut flows: Vec<Flow>, fb: Sender<Feedback>,
+    listener: TcpListener,
+    mut flows: Arc<Mutex<Vec<Flow>>>,
+    fb: Sender<Feedback>,
 ) -> Result<(), Error> {
     loop {
         let (socket, remote) = listener.accept()?;
@@ -603,7 +619,7 @@ fn command_thread(
 
 /// Process remote commands
 fn process_commands(
-    socket: TcpStream, flows: &mut Vec<Flow>, fb: Sender<Feedback>,
+    socket: TcpStream, flows: &mut Arc<Mutex<Vec<Flow>>>, fb: Sender<Feedback>,
 ) -> Result<(), Error> {
     let mut buf = vec![];
     let mut reader = BufReader::new(socket);
@@ -615,7 +631,8 @@ fn process_commands(
         match buf.pop() {
             Some(SEP_GROUP) => {
                 let cmd = std::str::from_utf8(&buf)?;
-                process_command(cmd, flows, fb.clone())?;
+                let mut flows = flows.lock().unwrap();
+                process_command(cmd, &mut flows, fb.clone())?;
             }
             Some(b) => {
                 debug!("Invalid command separator: 0x{:X}", b);
@@ -637,7 +654,10 @@ fn process_command(cmd: &str, flows: &mut Vec<Flow>, fb: Sender<Feedback>)
         let params = &cmd[5..];
         let mut config = Config::load();
         let number = config.flow_subcommand(&params)?;
-        flows[number] = config.flow(number, fb)?;
+        match flows.get_mut(number) {
+            Some(flow) => *flow = config.flow(number, fb)?,
+            None => return Err(Error::Other("Invalid flow number")),
+        }
         return Ok(());
     } else if cmd.starts_with("config\x1E") {
         let params = &cmd[7..];
