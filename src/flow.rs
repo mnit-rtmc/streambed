@@ -257,18 +257,22 @@ fn set_property(
 }
 
 /// Link ghost pad with sink
-fn link_ghost_pad(src: &Element, src_pad: &Pad, sink: Element) {
+fn link_ghost_pad(idx: usize, src: &Element, src_pad: &Pad, sink: Element) {
     match sink.get_static_pad("sink") {
         Some(sink_pad) => {
             let pn = src_pad.get_name();
             let p0 = src.get_name();
             let p1 = sink.get_name();
             match src_pad.link(&sink_pad) {
-                Ok(_) => debug!("pad {} linked: {} => {}", pn, p0, p1),
-                Err(_) => debug!("pad {} not linked: {} => {}", pn, p0, p1),
+                Ok(_) => {
+                    debug!("Flow{} pad {} linked: {} => {}", idx, pn, p0, p1);
+                }
+                Err(_) => {
+                    debug!("Flow{} pad {} not linked: {} => {}", idx, pn,p0,p1);
+                },
             }
         }
-        None => error!("no sink pad"),
+        None => error!("Flow{}: no sink pad", idx),
     }
 }
 
@@ -1134,9 +1138,10 @@ impl FlowBuilder {
             }
             Err(_) => {
                 let sink = sink.downgrade(); // weak ref
+                let idx = self.idx;
                 src.connect_pad_added(move |src, src_pad| {
                     match sink.upgrade() {
-                        Some(sink) => link_ghost_pad(src, src_pad, sink),
+                        Some(sink) => link_ghost_pad(idx, src, src_pad, sink),
                         None => error!("sink gone"),
                     }
                 });
