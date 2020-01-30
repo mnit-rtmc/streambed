@@ -206,8 +206,6 @@ pub struct FlowBuilder {
     pipeline: WeakRef<Pipeline>,
     /// Head element of pipeline
     head: Option<Element>,
-    /// Flag indicating playing
-    is_playing: bool,
     /// Number of pushed packets
     pushed: u64,
     /// Number of lost packets
@@ -692,7 +690,6 @@ impl FlowBuilder {
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
-        self.is_playing = true;
         self.stopped();
         let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
@@ -1154,7 +1151,6 @@ impl FlowBuilder {
     fn handle_message(&mut self, msg: &Message) -> glib::Continue {
         match msg.view() {
             MessageView::AsyncDone(_) => {
-                self.is_playing = true;
                 trace!("{}: playing", self);
                 if let Some(fb) = &self.feedback {
                     if let Err(e) = fb.send(Feedback::Playing(self.idx)) {
@@ -1209,13 +1205,10 @@ impl FlowBuilder {
 
     /// Provide feedback for stopped state
     fn stopped(&mut self) {
-        if self.is_playing {
-            self.is_playing = false;
-            trace!("{}: stopped", self);
-            if let Some(fb) = &self.feedback {
-                if let Err(e) = fb.send(Feedback::Stopped(self.idx)) {
-                    error!("{}: send {}", self, e);
-                }
+        trace!("{}: stopped", self);
+        if let Some(fb) = &self.feedback {
+            if let Err(e) = fb.send(Feedback::Stopped(self.idx)) {
+                error!("{}: send {}", self, e);
             }
         }
     }
@@ -1386,15 +1379,12 @@ impl FlowChecker {
     fn do_check(&mut self) -> glib::Continue {
         self.count += 1;
         match self.pipeline.upgrade() {
-            Some(pipeline) => {
-                if self.check_stopped(&pipeline) {
-                    self.count = 0;
-                    return glib::Continue(true);
+            Some(pipeline) => match self.check_flow(&pipeline) {
+                Ok(()) => glib::Continue(true),
+                Err(e) => {
+                    error!("{}: {:?}", self, e);
+                    glib::Continue(false)
                 }
-                if !self.post_stats(&pipeline) {
-                    return glib::Continue(false);
-                }
-                self.check_sink(&pipeline)
             }
             None => {
                 debug!("{}: do_check pipeline gone", self);
@@ -1402,52 +1392,51 @@ impl FlowChecker {
             }
         }
     }
-    /// Check if pipeline is stopped, and restart if necessary
-    fn check_stopped(&self, pipeline: &Pipeline) -> bool {
-        match pipeline.get_state(ClockTime::from_seconds(0)) {
-            (_, State::Null, _) => {
-                trace!("{}: restarting", self);
-                pipeline.set_state(State::Playing).unwrap();
-                true
+    /// Check pipeline flow
+    fn check_flow(&mut self, pipeline: &Pipeline) -> Result<(), Error> {
+        if self.count > PTS_CHECK_TRIES {
+            if self.is_stopped(&pipeline) {
+                self.restart_pipeline(&pipeline);
+                return Ok(());
             }
+            if self.is_stuck(&pipeline)? {
+                self.post_eos(&pipeline)?;
+            }
+        }
+        self.post_stats(&pipeline)
+    }
+    /// Check if pipeline is stopped
+    fn is_stopped(&self, pipeline: &Pipeline) -> bool {
+        match pipeline.get_state(ClockTime::from_seconds(0)) {
+            (_, State::Null, _) => true,
             _ => false,
         }
     }
-    /// Post stats message
-    fn post_stats(&self, pipeline: &Pipeline) -> bool {
-        let structure = Structure::new_empty("stats");
-        let msg = Message::new_application(structure).build();
+    /// Restart the pipeline
+    fn restart_pipeline(&mut self, pipeline: &Pipeline) {
+        trace!("{}: restarting", self);
+        pipeline.set_state(State::Playing).unwrap();
+        self.count = 0;
+    }
+    /// Check if pipeline is stuck
+    fn is_stuck(&mut self, pipeline: &Pipeline) -> Result<bool, Error> {
+        let sink = pipeline.get_by_name("sink")
+            .ok_or(Error::Other("sink gone"))?;
+        self.is_sink_stuck(&sink)
+    }
+    /// Post an EOS message on the pipeline bus
+    fn post_eos(&self, pipeline: &Pipeline) -> Result<(), Error> {
+        let sink = pipeline.get_by_name("sink")
+            .ok_or(Error::Other("sink gone"))?;
+        let msg = Message::new_eos().src(Some(&sink)).build();
         let bus = pipeline.get_bus().unwrap();
         match bus.post(&msg) {
-            Ok(_) => true,
-            Err(_) => {
-                error!("{}: post_stats failed", self);
-                false
-            }
-        }
-    }
-    /// Check sink in a pipeline
-    fn check_sink(&mut self, pipeline: &Pipeline) -> glib::Continue {
-        match pipeline.get_by_name("sink") {
-            Some(sink) => {
-                if self.is_stuck(&sink) {
-                    let msg = Message::new_eos().src(Some(&sink)).build();
-                    let bus = pipeline.get_bus().unwrap();
-                    if let Err(_) = bus.post(&msg) {
-                        error!("{}: check_sink post failed", self);
-                        return glib::Continue(false);
-                    }
-                }
-                glib::Continue(true)
-            }
-            None => {
-                warn!("{}: check_sink sink gone", self);
-                glib::Continue(false)
-            }
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::Other("post_eos failed")),
         }
     }
     /// Check sink to make sure that last-sample is updating.
-    fn is_stuck(&mut self, sink: &Element) -> bool {
+    fn is_sink_stuck(&mut self, sink: &Element) -> Result<bool, Error> {
         match sink.get_property("last-sample") {
             Ok(sample) => match sample.get::<Sample>() {
                 Ok(Some(sample)) => match sample.get_buffer() {
@@ -1461,14 +1450,28 @@ impl FlowChecker {
                         } else {
                             self.last_pts = pts;
                         }
-                        return stuck;
+                        return Ok(stuck);
                     }
-                    None => error!("{}: sample buffer missing", self),
+                    None => return Err(Error::Other("sample buffer missing")),
                 },
                 _ => debug!("{}: last-sample missing {}", self, self.count),
             },
-            Err(_) => error!("{}: get last-sample failed", self),
+            Err(_) => return Err(Error::Other("get last-sample failed")),
         };
-        self.count > PTS_CHECK_TRIES
+        Ok(true)
+    }
+    /// Post stats message
+    fn post_stats(&self, pipeline: &Pipeline) -> Result<(), Error> {
+        let structure = Structure::new_empty("stats");
+        let msg = Message::new_application(structure).build();
+        let bus = pipeline.get_bus().unwrap();
+        // FIXME: this shouldn't fail
+        match bus.post(&msg) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                trace!("{}: post_stats failed", self);
+                Ok(())
+            }
+        }
     }
 }

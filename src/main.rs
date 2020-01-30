@@ -573,8 +573,9 @@ fn run_subcommand(config: Config) -> Result<(), Error> {
 }
 
 /// Thread to receive feedback
-fn feedback_thread(flows: Arc<Mutex<Vec<Flow>>>, rx: Receiver<Feedback>
-) -> Result<(), Error> {
+fn feedback_thread(flows: Arc<Mutex<Vec<Flow>>>, rx: Receiver<Feedback>)
+    -> Result<(), Error>
+{
     loop {
         let state = rx.recv().unwrap();
         let (n_playing, n_stopped) = count_flows(&flows);
