@@ -14,6 +14,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use std::time::Duration;
 use streambed::{
     Acceleration, Encoding, Error, Feedback, Flow, FlowBuilder, Sink, Source,
     Transport,
@@ -606,16 +607,28 @@ fn command_thread(
     listener: TcpListener,
     mut flows: Arc<Mutex<Vec<Flow>>>,
     fb: Sender<Feedback>,
-) -> Result<(), Error> {
+) {
     loop {
-        let (socket, remote) = listener.accept()?;
-        info!("command connection OPENED: {:?}", remote);
-        match process_commands(socket, &mut flows, fb.clone()) {
-            Err(e) => warn!("{:?} processing command", e),
-            _ => (),
+        if let Err(e) = process_connection(&listener, &mut flows, &fb) {
+            warn!("command_thread: {:?}", e);
         }
-        info!("command connection CLOSED: {:?}", remote);
+        thread::sleep(Duration::from_secs(1));
     }
+}
+
+/// Process a TCP connection
+fn process_connection(
+    listener: &TcpListener,
+    mut flows: &mut Arc<Mutex<Vec<Flow>>>,
+    fb: &Sender<Feedback>,
+) -> Result<(), Error>
+{
+    let (socket, remote) = listener.accept()?;
+    info!("command connection OPENED: {:?}", remote);
+    socket.set_read_timeout(Some(Duration::from_secs(35)))?;
+    let res = process_commands(socket, &mut flows, fb.clone());
+    info!("command connection CLOSED: {:?}", remote);
+    res
 }
 
 /// Process remote commands
