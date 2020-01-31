@@ -216,6 +216,8 @@ pub struct FlowBuilder {
 
 /// Video flow
 pub struct Flow {
+    /// Index of flow
+    idx: usize,
     /// Video pipeline
     pipeline: Pipeline,
     /// Pipeline message bus
@@ -700,6 +702,7 @@ impl FlowBuilder {
         glib::source::timeout_add(timeout_ms, move || checker.do_check());
         pipeline.set_state(State::Playing).unwrap();
         Ok(Flow {
+            idx,
             pipeline,
             bus,
         })
@@ -1349,6 +1352,12 @@ impl Drop for Flow {
     }
 }
 
+impl fmt::Display for Flow {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Flow{}", self.idx)
+    }
+}
+
 impl Flow {
     /// Check if the flow is playing
     pub fn is_playing(&self) -> bool {
@@ -1394,7 +1403,7 @@ impl FlowChecker {
     }
     /// Check pipeline flow
     fn check_flow(&mut self, pipeline: &Pipeline) -> Result<(), Error> {
-        if self.count > 0 && self.is_stopped(&pipeline) {
+        if self.count > 0 && !self.is_playing(&pipeline) {
             self.restart_pipeline(&pipeline);
             return Ok(());
         }
@@ -1403,10 +1412,10 @@ impl FlowChecker {
         }
         self.post_stats(&pipeline)
     }
-    /// Check if pipeline is stopped
-    fn is_stopped(&self, pipeline: &Pipeline) -> bool {
+    /// Check if pipeline is playing
+    fn is_playing(&self, pipeline: &Pipeline) -> bool {
         match pipeline.get_state(ClockTime::from_seconds(0)) {
-            (_, State::Null, _) => true,
+            (_, State::Playing, _) => true,
             _ => false,
         }
     }
