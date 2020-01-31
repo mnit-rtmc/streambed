@@ -1394,14 +1394,12 @@ impl FlowChecker {
     }
     /// Check pipeline flow
     fn check_flow(&mut self, pipeline: &Pipeline) -> Result<(), Error> {
-        if self.count > PTS_CHECK_TRIES {
-            if self.is_stopped(&pipeline) {
-                self.restart_pipeline(&pipeline);
-                return Ok(());
-            }
-            if self.is_stuck(&pipeline)? {
-                self.post_eos(&pipeline)?;
-            }
+        if self.count > 0 && self.is_stopped(&pipeline) {
+            self.restart_pipeline(&pipeline);
+            return Ok(());
+        }
+        if self.count > PTS_CHECK_TRIES && self.is_stuck(&pipeline)? {
+            self.post_eos(&pipeline)?;
         }
         self.post_stats(&pipeline)
     }
