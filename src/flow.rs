@@ -692,7 +692,6 @@ impl FlowBuilder {
         let pipeline = Pipeline::new(Some(&name));
         self.pipeline = pipeline.downgrade();
         self.add_elements()?;
-        self.stopped();
         let timeout_ms = self.source.timeout_ms();
         let bus = pipeline.get_bus().unwrap();
         if let Err(_) = bus.add_watch(move |_bus, m| self.handle_message(m)) {
@@ -1202,9 +1201,22 @@ impl FlowBuilder {
     /// Stop the flow
     fn stop(&mut self) {
         if let Some(pipeline) = self.pipeline.upgrade() {
-            pipeline.set_state(State::Null).unwrap();
+            if self.is_playing(&pipeline) {
+                debug!("{}: stopping", self);
+                pipeline.set_state(State::Null).unwrap();
+            } else {
+                debug!("{}: restarting (not playing)", self);
+                pipeline.set_state(State::Playing).unwrap();
+            }
         }
-        self.stopped();
+    }
+
+    /// Check if pipeline is playing
+    fn is_playing(&self, pipeline: &Pipeline) -> bool {
+        match pipeline.get_state(ClockTime::from_seconds(0)) {
+            (_, State::Playing, _) => true,
+            _ => false,
+        }
     }
 
     /// Provide feedback for stopped state
@@ -1214,6 +1226,10 @@ impl FlowBuilder {
             if let Err(e) = fb.send(Feedback::Stopped(self.idx)) {
                 error!("{}: send {}", self, e);
             }
+        }
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            debug!("{}: restarting (stopped)", self);
+            pipeline.set_state(State::Playing).unwrap();
         }
     }
 
