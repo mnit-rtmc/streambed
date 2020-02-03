@@ -38,7 +38,7 @@ const TTL_MULTICAST: i32 = 15;
 const RTP_VIDEO_CLOCK_RATE: i32 = 90_000;
 
 /// Number of times to check PTS before giving up
-const PTS_CHECK_TRIES: usize = 5;
+const PTS_CHECK_TRIES: usize = 4;
 
 /// Font size (pt), using default height
 const FONT_SZ: u32 = 14;
@@ -1011,6 +1011,7 @@ impl FlowBuilder {
     fn add_queue(&mut self) -> Result<(), Error> {
         let que = make_element("queue", None)?;
         set_property(&que, "max-size-time", &SEC_NS)?;
+        set_property(&que, "flush-on-eos", &true)?;
         if self.needs_encode() {
             // leak (drop) packets -- when encoding cannot keep up
             que.set_property_from_str("leaky", &"downstream");
@@ -1403,7 +1404,7 @@ impl FlowChecker {
     }
     /// Check pipeline flow
     fn check_flow(&mut self, pipeline: &Pipeline) -> Result<(), Error> {
-        if self.count > 0 && !self.is_playing(&pipeline) {
+        if !self.is_playing(&pipeline) {
             self.restart_pipeline(&pipeline);
             return Ok(());
         }
@@ -1421,7 +1422,8 @@ impl FlowChecker {
     }
     /// Restart the pipeline
     fn restart_pipeline(&mut self, pipeline: &Pipeline) {
-        trace!("{}: restarting", self);
+        debug!("{}: restarting", self);
+        pipeline.set_state(State::Null).unwrap();
         pipeline.set_state(State::Playing).unwrap();
         self.count = 0;
     }
@@ -1437,6 +1439,7 @@ impl FlowChecker {
             .ok_or(Error::Other("sink gone"))?;
         let msg = Message::new_eos().src(Some(&sink)).build();
         let bus = pipeline.get_bus().unwrap();
+        debug!("{}: posting EOS", self);
         match bus.post(&msg) {
             Ok(_) => Ok(()),
             Err(_) => Err(Error::Other("post_eos failed")),
@@ -1452,8 +1455,7 @@ impl FlowChecker {
                         trace!("{}: PTS {}", self, pts);
                         let stuck = pts == self.last_pts;
                         if stuck {
-                            debug!("{}: PTS stuck @ {} -- posting EOS", self,
-                                pts);
+                            debug!("{}: PTS stuck @ {}", self, pts);
                         } else {
                             self.last_pts = pts;
                         }
