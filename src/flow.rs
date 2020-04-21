@@ -685,8 +685,8 @@ impl FlowBuilder {
         self
     }
 
-    /// Build the flow
-    pub fn build(mut self) -> Result<Flow, Error> {
+    /// Try to build the flow
+    fn try_build(mut self) -> Result<Flow, Error> {
         let idx = self.idx;
         let name = format!("m{}", self.idx);
         let pipeline = Pipeline::new(Some(&name));
@@ -704,6 +704,15 @@ impl FlowBuilder {
             idx,
             pipeline,
             bus,
+        })
+    }
+
+    /// Build the flow
+    pub fn build(self) -> Result<Flow, Error> {
+        let idx = self.idx;
+        self.try_build().or_else(|e| {
+            error!("{}: building flow", e);
+            FlowBuilder::new(idx).try_build()
         })
     }
 
