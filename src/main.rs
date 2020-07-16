@@ -113,6 +113,7 @@ impl FlowConfig {
             None => Transport::default(),
         }
     }
+
     /// Get source encoding
     fn source_encoding(&self) -> Encoding {
         match &self.source_encoding {
@@ -123,6 +124,7 @@ impl FlowConfig {
             None => Encoding::default(),
         }
     }
+
     /// Get source timeout
     fn timeout(&self) -> u16 {
         match self.timeout {
@@ -130,6 +132,7 @@ impl FlowConfig {
             None => 2,
         }
     }
+
     /// Get buffering latency
     fn latency(&self) -> u32 {
         match self.latency {
@@ -137,6 +140,7 @@ impl FlowConfig {
             None => 200,
         }
     }
+
     /// Get source
     fn source(&self) -> Source {
         Source::default()
@@ -146,6 +150,7 @@ impl FlowConfig {
             .with_timeout(self.timeout())
             .with_latency(self.latency())
     }
+
     /// Get overlay text
     fn overlay_text(&self) -> Option<&str> {
         match &self.overlay_text {
@@ -153,6 +158,7 @@ impl FlowConfig {
             None => None,
         }
     }
+
     /// Get sink encoding
     fn sink_encoding(&self) -> Encoding {
         match &self.sink_encoding {
@@ -163,6 +169,7 @@ impl FlowConfig {
             None => self.source_encoding(),
         }
     }
+
     /// Get sink
     fn sink(&self) -> Sink {
         match (&self.address, &self.port) {
@@ -342,6 +349,7 @@ impl Config {
         path.push(CONFIG_FILE);
         path
     }
+
     /// Load configuration from file
     fn load() -> Self {
         let path = Config::path();
@@ -362,6 +370,7 @@ impl Config {
             }
         }
     }
+
     /// Store configuration to file
     fn store(&self) {
         let path = Config::path();
@@ -511,6 +520,7 @@ impl Config {
         self.store();
         Ok(number)
     }
+
     /// Convert config into a Vec of Flows
     fn into_flows(self, fb: Sender<Feedback>) -> Result<Vec<Flow>, Error> {
         let mut flows = vec![];
@@ -519,6 +529,7 @@ impl Config {
         }
         Ok(flows)
     }
+
     /// Create a flow
     fn flow(&self, i: usize, fb: Sender<Feedback>) -> Result<Flow, Error> {
         let acceleration = match &self.acceleration {

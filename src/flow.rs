@@ -600,6 +600,7 @@ impl Sink {
             _ => false,
         }
     }
+
     /// Get the gstreamer factory name
     fn factory_name(&self, acceleration: Acceleration) -> &'static str {
         match (self, acceleration) {
@@ -609,6 +610,7 @@ impl Sink {
             (Sink::WINDOW(_), _) => "gtksink",
         }
     }
+
     /// Get the matrix crop setting
     fn crop(&self) -> MatrixCrop {
         match self {
@@ -616,6 +618,7 @@ impl Sink {
             _ => MatrixCrop::default(),
         }
     }
+
     /// Get the sink encoding
     fn encoding(&self) -> Encoding {
         match self {
@@ -623,6 +626,7 @@ impl Sink {
             _ => Encoding::RAW,
         }
     }
+
     /// Should config be inserted in-band?
     fn insert_config(&self) -> bool {
         match self {
@@ -1325,6 +1329,7 @@ impl FlowBuilder {
         }
         Ok(())
     }
+
     /// Update packet statistics
     fn update_packet_stats(&mut self) {
         let pushed = self.pushed;
@@ -1353,6 +1358,7 @@ impl FlowBuilder {
             }
         }
     }
+
     /// Get statistics from jitter buffer element
     fn update_jitter_stats(&mut self, jitter: Element) -> Result<(), Error> {
         let prop = jitter.get_property("stats")?;
@@ -1410,6 +1416,7 @@ impl FlowChecker {
             last_pts: ClockTime::none(),
         }
     }
+
     /// Do periodic flow checks
     fn do_check(&mut self) -> glib::Continue {
         self.count += 1;
@@ -1427,6 +1434,7 @@ impl FlowChecker {
             }
         }
     }
+
     /// Check pipeline flow
     fn check_flow(&mut self, pipeline: &Pipeline) -> Result<(), Error> {
         if !self.is_playing(&pipeline) {
@@ -1438,6 +1446,7 @@ impl FlowChecker {
         }
         self.post_stats(&pipeline)
     }
+
     /// Check if pipeline is playing
     fn is_playing(&self, pipeline: &Pipeline) -> bool {
         match pipeline.get_state(ClockTime::from_seconds(0)) {
@@ -1445,6 +1454,7 @@ impl FlowChecker {
             _ => false,
         }
     }
+
     /// Restart the pipeline
     fn restart_pipeline(&mut self, pipeline: &Pipeline) {
         debug!("{}: restarting", self);
@@ -1452,12 +1462,14 @@ impl FlowChecker {
         pipeline.set_state(State::Playing).unwrap();
         self.count = 0;
     }
+
     /// Check if pipeline is stuck
     fn is_stuck(&mut self, pipeline: &Pipeline) -> Result<bool, Error> {
         let sink = pipeline.get_by_name("sink")
             .ok_or(Error::Other("sink gone"))?;
         self.is_sink_stuck(&sink)
     }
+
     /// Post an EOS message on the pipeline bus
     fn post_eos(&self, pipeline: &Pipeline) -> Result<(), Error> {
         let sink = pipeline.get_by_name("sink")
@@ -1470,6 +1482,7 @@ impl FlowChecker {
             Err(_) => Err(Error::Other("post_eos failed")),
         }
     }
+
     /// Check sink to make sure that last-sample is updating.
     fn is_sink_stuck(&mut self, sink: &Element) -> Result<bool, Error> {
         match sink.get_property("last-sample") {
@@ -1494,6 +1507,7 @@ impl FlowChecker {
         };
         Ok(true)
     }
+
     /// Post stats message
     fn post_stats(&self, pipeline: &Pipeline) -> Result<(), Error> {
         let structure = Structure::new_empty("stats");
