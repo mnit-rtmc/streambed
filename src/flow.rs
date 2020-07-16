@@ -4,6 +4,7 @@
 //
 use crate::error::Error;
 use glib::{Cast, ObjectExt, ToSendValue, ToValue, WeakRef};
+use gstreamer::message;
 use gstreamer::{
     Bus, Caps, ClockTime, Element, ElementExt, ElementExtManual,
     ElementFactory, GObjectExtManualGst, GstBinExt, GstObjectExt, Message,
@@ -1484,7 +1485,7 @@ impl FlowChecker {
         let sink = pipeline
             .get_by_name("sink")
             .ok_or(Error::Other("sink gone"))?;
-        let msg = Message::new_eos().src(Some(&sink)).build();
+        let msg = message::Eos::builder().src(&sink).build();
         let bus = pipeline.get_bus().unwrap();
         debug!("{}: posting EOS", self);
         match bus.post(&msg) {
@@ -1521,7 +1522,7 @@ impl FlowChecker {
     /// Post stats message
     fn post_stats(&self, pipeline: &Pipeline) -> Result<(), Error> {
         let structure = Structure::new_empty("stats");
-        let msg = Message::new_application(structure).build();
+        let msg = message::Application::new(structure);
         let bus = pipeline.get_bus().unwrap();
         // FIXME: this shouldn't fail
         match bus.post(&msg) {
