@@ -11,8 +11,8 @@ use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use streambed::{
@@ -391,7 +391,8 @@ impl Config {
 
     /// Config sub-command
     fn config_subcommand<'a, P: Parameters<'a>>(
-        &mut self, params: &'a P,
+        &mut self,
+        params: &'a P,
     ) -> Result<(), Error> {
         let mut param = false;
         if let Some(acceleration) = params.value("acceleration") {
@@ -425,7 +426,8 @@ impl Config {
 
     /// Flow sub-command
     fn flow_subcommand<'a, P: Parameters<'a>>(
-        &mut self, params: &'a P,
+        &mut self,
+        params: &'a P,
     ) -> Result<usize, Error> {
         let number = params
             .value("number")
@@ -585,21 +587,26 @@ fn run_subcommand(config: Config) -> Result<(), Error> {
 }
 
 /// Thread to receive feedback
-fn feedback_thread(flows: Arc<Mutex<Vec<Flow>>>, rx: Receiver<Feedback>)
-    -> Result<(), Error>
-{
+fn feedback_thread(
+    flows: Arc<Mutex<Vec<Flow>>>,
+    rx: Receiver<Feedback>,
+) -> Result<(), Error> {
     loop {
         let state = rx.recv().unwrap();
         let (n_playing, n_stopped) = count_flows(&flows);
         match state {
             Feedback::Playing(idx) => {
-                info!("Flow{} started: {} playing, {} stopped", idx,
-                    n_playing, n_stopped);
-            },
+                info!(
+                    "Flow{} started: {} playing, {} stopped",
+                    idx, n_playing, n_stopped
+                );
+            }
             Feedback::Stopped(idx) => {
-                info!("Flow{} stopped: {} playing, {} stopped", idx,
-                    n_playing, n_stopped);
-            },
+                info!(
+                    "Flow{} stopped: {} playing, {} stopped",
+                    idx, n_playing, n_stopped
+                );
+            }
             _ => (),
         }
     }
@@ -632,8 +639,7 @@ fn process_connection(
     listener: &TcpListener,
     mut flows: &mut Arc<Mutex<Vec<Flow>>>,
     fb: &Sender<Feedback>,
-) -> Result<(), Error>
-{
+) -> Result<(), Error> {
     let (socket, remote) = listener.accept()?;
     info!("command connection OPENED: {:?}", remote);
     socket.set_read_timeout(Some(Duration::from_secs(35)))?;
@@ -644,7 +650,9 @@ fn process_connection(
 
 /// Process remote commands
 fn process_commands(
-    socket: TcpStream, flows: &mut Arc<Mutex<Vec<Flow>>>, fb: Sender<Feedback>,
+    socket: TcpStream,
+    flows: &mut Arc<Mutex<Vec<Flow>>>,
+    fb: Sender<Feedback>,
 ) -> Result<(), Error> {
     let mut buf = vec![];
     let mut reader = BufReader::new(socket);
@@ -671,9 +679,11 @@ fn process_commands(
 }
 
 /// Process a remote command
-fn process_command(cmd: &str, flows: &mut Vec<Flow>, fb: Sender<Feedback>)
-    -> Result<(), Error>
-{
+fn process_command(
+    cmd: &str,
+    flows: &mut Vec<Flow>,
+    fb: Sender<Feedback>,
+) -> Result<(), Error> {
     // Maybe someday, use SEP_RECORD instead of \x1E
     if cmd.starts_with("flow\x1E") {
         let params = &cmd[5..];

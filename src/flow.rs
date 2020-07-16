@@ -163,10 +163,11 @@ impl fmt::Display for Feedback {
         match self {
             Feedback::Playing(idx) => write!(f, "Flow{} playing", idx),
             Feedback::Stopped(idx) => write!(f, "Flow{} stopped", idx),
-            Feedback::Stats(idx, pushed, lost, late) => {
-                write!(f, "Flow{} stats: {} pushed, {} lost, {} late",
-                    idx, pushed, lost, late)
-            }
+            Feedback::Stats(idx, pushed, lost, late) => write!(
+                f,
+                "Flow{} stats: {} pushed, {} lost, {} late",
+                idx, pushed, lost, late
+            ),
         }
     }
 }
@@ -238,7 +239,8 @@ struct FlowChecker {
 
 /// Make a pipeline element
 fn make_element(
-    factory_name: &'static str, name: Option<&str>,
+    factory_name: &'static str,
+    name: Option<&str>,
 ) -> Result<Element, Error> {
     ElementFactory::make(factory_name, name).map_err(|_| {
         error!("make_element: {}", factory_name);
@@ -248,7 +250,9 @@ fn make_element(
 
 /// Set a property of an element
 fn set_property(
-    elem: &Element, name: &'static str, value: &dyn ToValue,
+    elem: &Element,
+    name: &'static str,
+    value: &dyn ToValue,
 ) -> Result<(), Error> {
     match elem.set_property(name, value) {
         Ok(()) => Ok(()),
@@ -268,8 +272,11 @@ fn link_ghost_pad(idx: usize, src: &Element, src_pad: &Pad, sink: Element) {
                     trace!("Flow{} pad {} linked: {} => {}", idx, pn, p0, p1);
                 }
                 Err(_) => {
-                    debug!("Flow{} pad {} not linked: {} => {}", idx, pn,p0,p1);
-                },
+                    debug!(
+                        "Flow{} pad {} not linked: {} => {}",
+                        idx, pn, p0, p1
+                    );
+                }
             }
         }
         None => error!("Flow{}: no sink pad", idx),
@@ -676,9 +683,7 @@ impl FlowBuilder {
     }
 
     /// Use the specified flow feedback
-    pub fn with_feedback(
-        mut self, feedback: Option<Sender<Feedback>>,
-    ) -> Self {
+    pub fn with_feedback(mut self, feedback: Option<Sender<Feedback>>) -> Self {
         self.feedback = feedback;
         self
     }
@@ -704,11 +709,7 @@ impl FlowBuilder {
         let mut checker = FlowChecker::new(idx, pipeline.downgrade());
         glib::source::timeout_add(timeout_ms, move || checker.do_check());
         pipeline.set_state(State::Playing).unwrap();
-        Ok(Flow {
-            idx,
-            pipeline,
-            bus,
-        })
+        Ok(Flow { idx, pipeline, bus })
     }
 
     /// Build the flow
@@ -950,7 +951,7 @@ impl FlowBuilder {
             Transport::UDP => src.set_property_from_str("protocols", &"udp"),
             Transport::MCAST => {
                 src.set_property_from_str("protocols", &"udp-mcast");
-            },
+            }
             Transport::TCP => src.set_property_from_str("protocols", &"tcp"),
         }
         set_property(&src, "tcp-timeout", &self.source.timeout_us())?;
@@ -1314,7 +1315,10 @@ impl FlowBuilder {
 
     /// Configure videobox properties
     fn config_vbox_props(
-        &self, vbx: Element, caps: Caps, crop: MatrixCrop,
+        &self,
+        vbx: Element,
+        caps: Caps,
+        crop: MatrixCrop,
     ) -> Result<(), Error> {
         for s in caps.iter() {
             match (s.get("width"), s.get("height")) {
@@ -1350,8 +1354,8 @@ impl FlowBuilder {
                 let pushed = self.pushed - pushed;
                 let lost = self.lost - lost;
                 let late = self.late - late;
-                if let Err(e) = fb.send(Feedback::Stats(self.idx, pushed, lost,
-                    late))
+                if let Err(e) =
+                    fb.send(Feedback::Stats(self.idx, pushed, lost, late))
                 {
                     error!("{}: send {}", self, e);
                 }
@@ -1362,13 +1366,17 @@ impl FlowBuilder {
     /// Get statistics from jitter buffer element
     fn update_jitter_stats(&mut self, jitter: Element) -> Result<(), Error> {
         let prop = jitter.get_property("stats")?;
-        let stats = prop.get::<Structure>()?
+        let stats = prop
+            .get::<Structure>()?
             .ok_or(Error::Other("empty stats"))?;
-        let pushed = stats.get::<u64>("num-pushed")?
+        let pushed = stats
+            .get::<u64>("num-pushed")?
             .ok_or(Error::Other("missing num-pushed"))?;
-        let lost = stats.get::<u64>("num-lost")?
+        let lost = stats
+            .get::<u64>("num-lost")?
             .ok_or(Error::Other("missing num-lost"))?;
-        let late = stats.get::<u64>("num-late")?
+        let late = stats
+            .get::<u64>("num-late")?
             .ok_or(Error::Other("missing num-late"))?;
         self.pushed = pushed;
         self.lost = lost;
@@ -1394,8 +1402,8 @@ impl Flow {
     /// Check if the flow is playing
     pub fn is_playing(&self) -> bool {
         match self.pipeline.get_state(ClockTime::from_seconds(0)) {
-             (_, State::Playing, _) => true,
-             _ => false,
+            (_, State::Playing, _) => true,
+            _ => false,
         }
     }
 }
@@ -1427,7 +1435,7 @@ impl FlowChecker {
                     error!("{}: {:?}", self, e);
                     glib::Continue(false)
                 }
-            }
+            },
             None => {
                 debug!("{}: do_check pipeline gone", self);
                 glib::Continue(false)
@@ -1465,14 +1473,16 @@ impl FlowChecker {
 
     /// Check if pipeline is stuck
     fn is_stuck(&mut self, pipeline: &Pipeline) -> Result<bool, Error> {
-        let sink = pipeline.get_by_name("sink")
+        let sink = pipeline
+            .get_by_name("sink")
             .ok_or(Error::Other("sink gone"))?;
         self.is_sink_stuck(&sink)
     }
 
     /// Post an EOS message on the pipeline bus
     fn post_eos(&self, pipeline: &Pipeline) -> Result<(), Error> {
-        let sink = pipeline.get_by_name("sink")
+        let sink = pipeline
+            .get_by_name("sink")
             .ok_or(Error::Other("sink gone"))?;
         let msg = Message::new_eos().src(Some(&sink)).build();
         let bus = pipeline.get_bus().unwrap();
