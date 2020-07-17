@@ -195,13 +195,13 @@ fn is_parseable<T: FromStr>(value: String) -> Result<(), String> {
     }
 }
 
-/// Check if a flows is valid
-fn check_flows(flows: usize, value: String) -> Result<(), String> {
+/// Check if flow index is valid
+fn check_flow_idx(n_flows: usize, value: String) -> Result<(), String> {
     if value.is_empty() {
         return Ok(());
     }
     match value.parse::<usize>() {
-        Ok(f) if f < flows => Ok(()),
+        Ok(f) if f < n_flows => Ok(()),
         Ok(_) => Err(String::from("Flow index out of bounds")),
         _ => Err(String::from("Invalid argument")),
     }
@@ -209,7 +209,7 @@ fn check_flows(flows: usize, value: String) -> Result<(), String> {
 
 /// Create clap App
 fn create_app(config: &Config) -> App<'static, 'static> {
-    let flows = config.flow.len();
+    let n_flows = config.flow.len();
     App::new("streambed")
         .version(VERSION)
         .setting(AppSettings::GlobalVersion)
@@ -254,7 +254,7 @@ fn create_app(config: &Config) -> App<'static, 'static> {
                         .required(true)
                         .help("flow index number")
                         .takes_value(true)
-                        .validator(move |v| check_flows(flows, v)),
+                        .validator(move |v| check_flow_idx(n_flows, v)),
                 )
                 .arg(
                     Arg::with_name("location")
@@ -526,20 +526,24 @@ impl Config {
     /// Convert config into a Vec of Flows
     fn into_flows(self, fb: Sender<Feedback>) -> Result<Vec<Flow>, Error> {
         let mut flows = vec![];
-        for i in 0..self.flow.len() {
-            flows.push(self.flow(i, fb.clone())?);
+        for number in 0..self.flow.len() {
+            flows.push(self.create_flow(number, fb.clone())?);
         }
         Ok(flows)
     }
 
     /// Create a flow
-    fn flow(&self, i: usize, fb: Sender<Feedback>) -> Result<Flow, Error> {
+    fn create_flow(
+        &self,
+        number: usize,
+        fb: Sender<Feedback>,
+    ) -> Result<Flow, Error> {
         let acceleration = match &self.acceleration {
             Some(a) => a.parse::<Acceleration>()?,
             None => Acceleration::NONE,
         };
-        if let Some(flow_cfg) = self.flow.iter().skip(i).next() {
-            let flow = FlowBuilder::new(i)
+        if let Some(flow_cfg) = self.flow.iter().skip(number).next() {
+            let flow = FlowBuilder::new(number)
                 .with_acceleration(acceleration)
                 .with_source(flow_cfg.source())
                 .with_overlay_text(flow_cfg.overlay_text())
@@ -560,9 +564,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = Config::load();
     match create_app(&config).get_matches().subcommand() {
         ("config", Some(matches)) => config.config_subcommand(matches)?,
-        ("flow", Some(matches)) => {
-            config.flow_subcommand(matches)?;
-        }
+        ("flow", Some(matches)) => config.flow_subcommand(matches)?,
         ("run", Some(_matches)) => run_subcommand(config)?,
         _ => unreachable!(),
     }
@@ -690,7 +692,7 @@ fn process_command(
         let mut config = Config::load();
         let number = config.flow_subcommand(&params)?;
         match flows.get_mut(number) {
-            Some(flow) => *flow = config.flow(number, fb)?,
+            Some(flow) => *flow = config.create_flow(number, fb)?,
             None => return Err(Error::Other("Invalid flow number")),
         }
         return Ok(());
