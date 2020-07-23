@@ -1,5 +1,7 @@
 # Streambed
 
+![](https://github.com/mnit-rtmc/streambed/workflows/build/badge.svg)
+
 **Streambed** is a real-time streaming service for video surveillance.  It
 handles multiple _flows_ of video, which can be controlled from a separate
 system using a simple network protocol.
