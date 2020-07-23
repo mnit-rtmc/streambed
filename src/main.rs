@@ -564,7 +564,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = Config::load();
     match create_app(&config).get_matches().subcommand() {
         ("config", Some(matches)) => config.config_subcommand(matches)?,
-        ("flow", Some(matches)) => config.flow_subcommand(matches)?,
+        ("flow", Some(matches)) => {
+            config.flow_subcommand(matches)?;
+        }
         ("run", Some(_matches)) => run_subcommand(config)?,
         _ => unreachable!(),
     }
