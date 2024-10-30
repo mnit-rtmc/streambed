@@ -271,15 +271,15 @@ fn link_ghost_pad(idx: usize, src: &Element, src_pad: &Pad, sink: Element) {
             match src_pad.link(&sink_pad) {
                 Ok(_) => {
                     trace!("Flow{} pad {} linked: {} => {}", idx, pn, p0, p1);
-                }
+                },
                 Err(_) => {
                     debug!(
                         "Flow{} pad {} not linked: {} => {}",
                         idx, pn, p0, p1
                     );
-                }
+                },
             }
-        }
+        },
         None => error!("Flow{}: no sink pad", idx),
     }
 }
@@ -803,11 +803,11 @@ impl FlowBuilder {
                 Encoding::MPEG4 => {
                     // send configuration headers once per second
                     set_property(&pay, "config-interval", &1u32)?;
-                }
+                },
                 Encoding::H264 | Encoding::H265 => {
                     // send sprop parameter sets every IDR frame (-1)
                     set_property(&pay, "config-interval", &(-1))?;
-                }
+                },
                 _ => (),
             }
         }
@@ -822,7 +822,7 @@ impl FlowBuilder {
             Encoding::MPEG2 => {
                 self.add_element(make_element("mpegtsmux", None)?)?;
                 self.add_element(make_element("mpeg2enc", None)?)
-            }
+            },
             Encoding::MPEG4 => self.add_element(self.create_mpeg4enc()?),
             Encoding::H264 => self.add_element(self.create_h264enc()?),
             Encoding::H265 => self.add_element(self.create_h265enc()?),
@@ -847,7 +847,7 @@ impl FlowBuilder {
                 set_property(&enc, "quality-level", &6u32)?;
                 enc.set_property_from_str("tune", &"low-power");
                 Ok(enc)
-            }
+            },
             Acceleration::OMX => make_element("omxh264enc", None),
             _ => {
                 let enc = make_element("x264enc", None)?;
@@ -858,7 +858,7 @@ impl FlowBuilder {
                 // fast (5), medium (6), etc.
                 enc.set_property_from_str("speed-preset", &"superfast");
                 Ok(enc)
-            }
+            },
         }
     }
 
@@ -871,13 +871,13 @@ impl FlowBuilder {
                 set_property(&enc, "quality-level", &6u32)?;
                 enc.set_property_from_str("tune", &"low-power");
                 Ok(enc)
-            }
+            },
             _ => {
                 let enc = make_element("x265enc", None)?;
                 enc.set_property_from_str("tune", &"zerolatency");
                 enc.set_property_from_str("speed-preset", &"superfast");
                 Ok(enc)
-            }
+            },
         }
     }
 
@@ -952,7 +952,7 @@ impl FlowBuilder {
             Transport::UDP => src.set_property_from_str("protocols", &"udp"),
             Transport::MCAST => {
                 src.set_property_from_str("protocols", &"udp-mcast");
-            }
+            },
             Transport::TCP => src.set_property_from_str("protocols", &"tcp"),
         }
         set_property(&src, "tcp-timeout", &self.source.timeout_us())?;
@@ -1005,12 +1005,12 @@ impl FlowBuilder {
                 self.add_element(make_element("imagefreeze", None)?)?;
                 self.add_element(make_element("videoconvert", None)?)?;
                 self.add_element(make_element("pngdec", None)?)
-            }
+            },
             Encoding::MJPEG => self.add_element(make_element("jpegdec", None)?),
             Encoding::MPEG2 => {
                 self.add_element(make_element("mpeg2dec", None)?)?;
                 self.add_element(make_element("tsdemux", None)?)
-            }
+            },
             Encoding::MPEG4 => self.add_element(self.create_mpeg4dec()?),
             Encoding::H264 => self.add_element(self.create_h264dec()?),
             Encoding::H265 => self.add_element(self.create_h265dec()?),
@@ -1049,7 +1049,7 @@ impl FlowBuilder {
                 let dec = make_element("avdec_h264", None)?;
                 set_property(&dec, "output-corrupt", &false)?;
                 Ok(dec)
-            }
+            },
         }
     }
 
@@ -1089,7 +1089,7 @@ impl FlowBuilder {
                 set_property(&sink, "host", addr)?;
                 set_property(&sink, "port", port)?;
                 set_property(&sink, "ttl-mc", &TTL_MULTICAST)?;
-            }
+            },
             Sink::WINDOW(crop) => {
                 set_property(
                     &sink,
@@ -1104,7 +1104,7 @@ impl FlowBuilder {
                         Err(_) => error!("{}: invalid video overlay", self),
                     }
                 }
-            }
+            },
             _ => (),
         }
         Ok(sink)
@@ -1137,7 +1137,7 @@ impl FlowBuilder {
                 }
                 self.head = Some(elem);
                 Ok(())
-            }
+            },
             None => Err(Error::Other("pipeline gone")),
         }
     }
@@ -1150,7 +1150,7 @@ impl FlowBuilder {
                 let p0 = src.get_name();
                 let p1 = sink.get_name();
                 trace!("{}: pad linked (static) {} => {}", self, p0, p1);
-            }
+            },
             Err(_) => {
                 let sink = sink.downgrade(); // weak ref
                 let idx = self.idx;
@@ -1160,7 +1160,7 @@ impl FlowBuilder {
                         None => error!("sink gone"),
                     }
                 });
-            }
+            },
         }
         Ok(())
     }
@@ -1175,30 +1175,30 @@ impl FlowBuilder {
                         error!("{}: send {}", self, e);
                     }
                 }
-            }
+            },
             MessageView::Eos(_) => {
                 trace!("{}: end of stream", self);
                 self.stop();
-            }
+            },
             MessageView::StateChanged(chg) => {
                 match (chg.get_current(), &chg.get_src()) {
                     (State::Playing, Some(src)) => {
                         if src.is::<Pipeline>() {
                             self.configure_playing();
                         }
-                    }
+                    },
                     (State::Null, _) => self.stopped(),
                     _ => (),
                 }
-            }
+            },
             MessageView::Error(err) => {
                 debug!("{}: error {}", self, err.get_error());
                 self.stop();
-            }
+            },
             MessageView::Warning(wrn) => {
                 debug!("{}: warning {}", self, wrn.get_error());
                 self.stop();
-            }
+            },
             MessageView::Element(elem) => {
                 if let Some(obj) = elem.get_src() {
                     if obj.get_name() == "GstUDPSrcTimeout" {
@@ -1206,7 +1206,7 @@ impl FlowBuilder {
                         self.stop();
                     }
                 }
-            }
+            },
             MessageView::Application(_app) => self.update_packet_stats(),
             _ => (),
         };
@@ -1259,7 +1259,7 @@ impl FlowBuilder {
                 if crop.is_cropped() {
                     self.configure_vbox(&pipeline, crop);
                 }
-            }
+            },
             None => error!("{}: pipeline gone", self),
         }
     }
@@ -1306,7 +1306,7 @@ impl FlowBuilder {
                             Err(_) => error!("{}: vbox props", self),
                             _ => (),
                         }
-                    }
+                    },
                     None => error!("{}: no caps on vbox src pad", self),
                 },
                 None => error!("{}: no vbox src pad", self),
@@ -1328,7 +1328,7 @@ impl FlowBuilder {
                     set_property(&vbx, "bottom", &crop.bottom(height))?;
                     set_property(&vbx, "left", &crop.left(width))?;
                     set_property(&vbx, "right", &crop.right(width))?;
-                }
+                },
                 _ => (),
             }
         }
@@ -1347,7 +1347,7 @@ impl FlowBuilder {
                         warn!("{}: jitter stats -- {}", self, e);
                     }
                 }
-            }
+            },
             None => error!("{}: pipeline gone", self),
         }
         if self.pushed >= pushed && self.lost >= lost && self.late >= late {
@@ -1435,12 +1435,12 @@ impl FlowChecker {
                 Err(e) => {
                     error!("{}: {:?}", self, e);
                     glib::Continue(false)
-                }
+                },
             },
             None => {
                 debug!("{}: do_check pipeline gone", self);
                 glib::Continue(false)
-            }
+            },
         }
     }
 
@@ -1509,7 +1509,7 @@ impl FlowChecker {
                             self.last_pts = pts;
                         }
                         return Ok(stuck);
-                    }
+                    },
                     None => return Err(Error::Other("sample buffer missing")),
                 },
                 _ => debug!("{}: last-sample missing {}", self, self.count),
@@ -1530,7 +1530,7 @@ impl FlowChecker {
             Err(_) => {
                 trace!("{}: post_stats failed", self);
                 Ok(())
-            }
+            },
         }
     }
 }

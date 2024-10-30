@@ -359,7 +359,7 @@ impl Config {
                 Err(e) => {
                     error!("{:?} parsing {:?}", e, path);
                     panic!("Invalid configuration");
-                }
+                },
             },
             Err(e) => {
                 error!("{:?} reading {:?}", e.kind(), path);
@@ -367,7 +367,7 @@ impl Config {
                     panic!("Invalid configuration");
                 }
                 Self::default()
-            }
+            },
         }
     }
 
@@ -384,7 +384,7 @@ impl Config {
                 if let Err(_e) = muon_rs::to_writer(writer, self) {
                     error!("storing {:?}", path);
                 }
-            }
+            },
             Err(e) => error!("{:?} writing {:?}", e.kind(), path),
         }
     }
@@ -566,7 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("config", Some(matches)) => config.config_subcommand(matches)?,
         ("flow", Some(matches)) => {
             config.flow_subcommand(matches)?;
-        }
+        },
         ("run", Some(_matches)) => run_subcommand(config)?,
         _ => unreachable!(),
     }
@@ -604,13 +604,13 @@ fn feedback_thread(
                     "Flow{} started: {} playing, {} stopped",
                     idx, n_playing, n_stopped
                 );
-            }
+            },
             Feedback::Stopped(idx) => {
                 info!(
                     "Flow{} stopped: {} playing, {} stopped",
                     idx, n_playing, n_stopped
                 );
-            }
+            },
             _ => (),
         }
     }
@@ -670,11 +670,11 @@ fn process_commands(
                 let cmd = std::str::from_utf8(&buf)?;
                 let mut flows = flows.lock().unwrap();
                 process_command(cmd, &mut flows, fb.clone())?;
-            }
+            },
             Some(b) => {
                 debug!("Invalid command separator: 0x{:X}", b);
                 return Err(Error::Other("Invalid command separator"));
-            }
+            },
             None => break,
         }
         buf.clear();

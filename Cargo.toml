@@ -5,7 +5,7 @@ authors = ["Douglas Lau <doug.lau@state.mn.us>"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/mnit-rtmc/streambed"
 repository = "https://github.com/mnit-rtmc/streambed"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 clap = "2.33"
